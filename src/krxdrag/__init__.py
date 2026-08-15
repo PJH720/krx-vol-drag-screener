@@ -1,0 +1,24 @@
+"""KRX variance-drag screener.
+
+Ranks Korean listed equities by the Itô correction term 0.5*sigma^2 -- the wedge
+between arithmetic expected return mu and realised compound growth g.
+"""
+
+from .config import ScreenConfig
+from .diagnostics import Diagnostics, compute_diagnostics
+from .metrics import DragMetrics, compute_drag, log_returns, simulate_gbm
+from .screener import screen, summarise
+
+__version__ = "0.1.0"
+
+__all__ = [
+    "ScreenConfig",
+    "Diagnostics",
+    "compute_diagnostics",
+    "DragMetrics",
+    "compute_drag",
+    "log_returns",
+    "simulate_gbm",
+    "screen",
+    "summarise",
+]
