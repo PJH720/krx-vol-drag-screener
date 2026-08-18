@@ -10,6 +10,7 @@ import pandas as pd
 from .config import ScreenConfig
 from .data import load_prices, median_turnover, to_wide
 from .diagnostics import compute_diagnostics
+from .jumps import decompose_jumps
 from .metrics import compute_drag, log_returns
 from .universe import load_universe
 
@@ -56,7 +57,8 @@ def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFr
         if tv < cfg.min_median_turnover:
             continue
 
-        d = compute_diagnostics(log_returns(series))
+        returns = log_returns(series)
+        d = compute_diagnostics(returns)
         info = meta.loc[symbol]
 
         row: dict = {
@@ -70,6 +72,11 @@ def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFr
         }
         if d is not None:
             row.update(d.to_dict())
+        if cfg.decompose_jumps:
+            j = decompose_jumps(returns, periods_per_year=cfg.periods_per_year)
+            if j is not None:
+                # n_obs is already on the row from DragMetrics and agrees
+                row.update({k: v for k, v in j.to_dict().items() if k != "n_obs"})
         rows.append(row)
 
     if not rows:

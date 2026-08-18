@@ -103,3 +103,22 @@ def test_to_wide_tolerates_duplicate_rows(synthetic_prices):
     wide = to_wide(doubled)
     assert wide.index.is_unique
     assert set(wide.columns) == set(synthetic_prices["symbol"].unique())
+
+
+def test_jump_columns_are_present_and_consistent(offline_screen):
+    """The jump split must reconcile with the drag it decomposes."""
+    df = screen(_cfg(), use_cache=False)
+    for col in ("drag_cont", "drag_jump", "jump_ratio", "bns_pvalue", "has_jumps"):
+        assert col in df.columns
+
+    total = df["drag_cont"] + df["drag_jump"]
+    # cont + jump reconstructs the quadratic-variation drag (not 0.5*sample
+    # variance, which differs by the mean-return term)
+    assert np.allclose(total, 0.5 * df["realized_qv"], rtol=1e-10)
+    assert (df["jump_ratio"].between(0.0, 1.0)).all()
+
+
+def test_jump_decomposition_can_be_switched_off(offline_screen):
+    df = screen(_cfg(decompose_jumps=False), use_cache=False)
+    assert "drag_cont" not in df.columns
+    assert not df.empty
