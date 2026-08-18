@@ -191,11 +191,12 @@ def simulate_jump_diffusion(
         size=n_days,
     )
     counts = rng.poisson(jump_intensity * dt, size=n_days)
-    jumps = np.array(
-        [
-            rng.normal(jump_mean, jump_std, size=k).sum() if k else 0.0
-            for k in counts
-        ]
+    # A sum of k iid N(m, s) draws is N(k*m, s*sqrt(k)), so the whole path's
+    # jump component comes out of one vectorised call instead of n_days of them.
+    jumps = np.where(
+        counts > 0,
+        rng.normal(jump_mean * counts, jump_std * np.sqrt(np.maximum(counts, 1))),
+        0.0,
     )
     increments = diffusive + jumps
     return s0 * np.exp(np.concatenate([[0.0], np.cumsum(increments)]))

@@ -10,6 +10,7 @@ readable everywhere rather than quietly corrupt on some machines.
 from __future__ import annotations
 
 import base64
+import functools
 import html
 from datetime import date
 from pathlib import Path
@@ -50,8 +51,13 @@ TABLE_COLS: list[tuple[str, str]] = [
 # helpers
 # --------------------------------------------------------------------------
 
+@functools.lru_cache(maxsize=1)
 def _korean_font() -> str | None:
-    """Name of an installed font that can render Hangul, or None."""
+    """Name of an installed font that can render Hangul, or None.
+
+    Cached: the answer cannot change within a process, and a full run would
+    otherwise materialise matplotlib's whole font list five times.
+    """
     try:
         from matplotlib import font_manager
     except ImportError:
@@ -81,10 +87,20 @@ def _with_percent_columns(df: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
-def _path(out_dir: Path | None, run_date: date | None, suffix: str) -> tuple[Path, date]:
+def _path(
+    out_dir: Path | None,
+    run_date: date | None,
+    suffix: str,
+    stem: str = "krx_drag",
+) -> tuple[Path, date]:
+    """Resolve an output path, defaulting both the directory and the date.
+
+    Kept in one place so REPORT_DIR stays a single indirection (the tests
+    monkeypatch it) and the chart writers do not each re-derive the defaults.
+    """
     out_dir = out_dir or REPORT_DIR
     run_date = run_date or date.today()
-    return out_dir / f"krx_drag_{run_date:%Y%m%d}.{suffix}", run_date
+    return out_dir / f"{stem}_{run_date:%Y%m%d}.{suffix}", run_date
 
 
 # --------------------------------------------------------------------------
@@ -436,9 +452,7 @@ def write_sector_chart(
     if plt is None:
         return None
 
-    out_dir = out_dir or REPORT_DIR
-    run_date = run_date or date.today()
-    path = out_dir / f"krx_drag_sectors_{run_date:%Y%m%d}.png"
+    path, run_date = _path(out_dir, run_date, "png", stem="krx_drag_sectors")
 
     top = sectors.head(top_n).iloc[::-1]  # largest at the top of a barh
     has_font = _korean_font() is not None
@@ -488,9 +502,7 @@ def write_rolling_chart(
     if plt is None:
         return None
 
-    out_dir = out_dir or REPORT_DIR
-    run_date = run_date or date.today()
-    path = out_dir / f"krx_drag_rolling_{run_date:%Y%m%d}.png"
+    path, run_date = _path(out_dir, run_date, "png", stem="krx_drag_rolling")
 
     fig, ax = plt.subplots(figsize=(11, 5))
     ax.fill_between(
@@ -523,9 +535,7 @@ def write_leverage_chart(
         return None
     from .leverage import leverage_curve, optimal_leverage
 
-    out_dir = out_dir or REPORT_DIR
-    run_date = run_date or date.today()
-    path = out_dir / f"krx_drag_leverage_{run_date:%Y%m%d}.png"
+    path, run_date = _path(out_dir, run_date, "png", stem="krx_drag_leverage")
 
     grid = np.linspace(-3.0, 5.0, 401)
     colors = ("#2f855a", "#2b6cb0", "#c53030")

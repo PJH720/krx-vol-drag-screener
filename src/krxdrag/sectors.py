@@ -53,21 +53,21 @@ def aggregate_sectors(
 
     d["_is_trap"] = (d["mu"] > 0) & (d["g"] < 0)
 
+    grouped = d.groupby("sector")
+    drag = grouped["drag"]
+
     agg: dict[str, pd.Series] = {
-        "n_names": d.groupby("sector")["symbol"].count(),
-        "median_sigma": d.groupby("sector")["sigma"].median(),
-        "median_drag": d.groupby("sector")["drag"].median(),
-        "drag_iqr": (
-            d.groupby("sector")["drag"].quantile(0.75)
-            - d.groupby("sector")["drag"].quantile(0.25)
-        ),
-        "median_mu": d.groupby("sector")["mu"].median(),
-        "median_g": d.groupby("sector")["g"].median(),
-        "share_trap": d.groupby("sector")["_is_trap"].mean(),
+        "n_names": grouped["symbol"].count(),
+        "median_sigma": grouped["sigma"].median(),
+        "median_drag": drag.median(),
+        "drag_iqr": drag.quantile(0.75) - drag.quantile(0.25),
+        "median_mu": grouped["mu"].median(),
+        "median_g": grouped["g"].median(),
+        "share_trap": grouped["_is_trap"].mean(),
     }
     for optional in ("drag_ratio", "gbm_score", "jump_ratio", "drag_trend"):
         if optional in d.columns:
-            agg[f"median_{optional}"] = d.groupby("sector")[optional].median()
+            agg[f"median_{optional}"] = grouped[optional].median()
 
     out = pd.DataFrame(agg)
     out = out[out["n_names"] >= min_names]
