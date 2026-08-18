@@ -208,3 +208,36 @@ def test_aggregation_runs_on_the_real_snapshot(real_screen_df):
     assert out["median_drag"].is_monotonic_decreasing
     # every sector median drag must still be half a squared volatility
     assert np.allclose(out["median_drag"], 0.5 * out["median_sigma"] ** 2, rtol=0.35)
+
+
+def test_portfolio_returns_are_not_forward_filled(correlated_panel):
+    """pandas 2.x pct_change() pads by default, fabricating 0% returns.
+
+    A halted name would be carried forward into a run of zeros plus one
+    catch-up jump, understating portfolio variance and so overstating the
+    diversification benefit this module reports.
+    """
+    wide, universe = correlated_panel
+    gapped = wide.copy()
+    gapped.iloc[300:305, 0] = np.nan  # one name halted for a week
+
+    simple = gapped.astype(float).pct_change(fill_method=None)
+    assert simple.iloc[300:306, 0].isna().all()
+
+    # the aggregate still computes, and does not silently gain a zero-return run
+    out = sector_portfolio_drag(gapped, universe, min_names=3)
+    assert len(out) == 1
+    assert np.isfinite(out.iloc[0]["portfolio_drag"])
+
+
+def test_a_halted_name_does_not_deflate_portfolio_drag(correlated_panel):
+    """Forward-filling would bias portfolio_drag downward; it must not."""
+    wide, universe = correlated_panel
+    gapped = wide.copy()
+    gapped.iloc[200:230, 0] = np.nan
+
+    clean = sector_portfolio_drag(wide, universe, min_names=3).iloc[0]["portfolio_drag"]
+    holed = sector_portfolio_drag(gapped, universe, min_names=3).iloc[0]["portfolio_drag"]
+    # dropping one name's month of data should not move the estimate much, and
+    # certainly must not collapse it toward zero the way padding would
+    assert holed == pytest.approx(clean, rel=0.25)

@@ -174,6 +174,11 @@ def _jump_section(df: pd.DataFrame, top_n: int) -> list[str]:
 
     d = _with_percent_columns(df)
     d["jump_ratio_pct"] = d["jump_ratio"] * PCT
+    # The total shown beside the two components must be their sum. That is the
+    # quadratic-variation drag, not DragMetrics.drag -- the latter is built from
+    # the ddof=1 sample variance and differs by the mean-return term, so
+    # printing it here would show a table whose columns visibly do not add up.
+    d["drag_qv_pct"] = (d["drag_cont"] + d["drag_jump"]) * PCT
     worst = d.sort_values("drag_jump", ascending=False).head(top_n)
     share_jumpy = float(df["has_jumps"].mean()) * PCT if "has_jumps" in df else float("nan")
 
@@ -182,7 +187,10 @@ def _jump_section(df: pd.DataFrame, top_n: int) -> list[str]:
         "",
         "실현분산은 연속 확산과 불연속 점프를 모두 담고 있다. 이중멱변동(bipower variation)은",
         "각 수익률을 이웃과 곱해 점프의 영향을 억제하므로, `RV − BPV` 가 점프 분산이 된다.",
-        f"이에 따라 드래그가 `½σ²_연속 + ½σ²_점프` 로 정확히 분해된다.",
+        "이에 따라 **실현 이차변동** `(A/n)Σr²` 이 `½σ²_연속 + ½σ²_점프` 로 정확히 분해된다.",
+        "",
+        "> 아래 표의 «총» 열은 이 이차변동 기준 드래그다. 표본분산(ddof=1) 기반의",
+        "> 메인 표 `드래그 ½σ²` 와는 평균수익률 항만큼 미세하게 다르다.",
         "",
         f"- BNS 검정에서 유의한 점프가 확인된 종목: **{share_jumpy:.1f}%**",
         f"- 중위 점프 비중 (점프분산/실현분산): **{df['jump_ratio'].median() * PCT:.1f}%**",
@@ -195,7 +203,7 @@ def _jump_section(df: pd.DataFrame, top_n: int) -> list[str]:
                 ("rank", "#"),
                 ("name", "종목"),
                 ("sigma_pct", "σ %"),
-                ("drag_pct", "총 드래그 %p"),
+                ("drag_qv_pct", "총 드래그 (QV) %p"),
                 ("drag_cont_pct", "연속 %p"),
                 ("drag_jump_pct", "점프 %p"),
                 ("jump_ratio_pct", "점프 비중 %"),
@@ -832,19 +840,22 @@ def write_html(
     if "drag_jump" in df.columns:
         dj = d.copy()
         dj["jump_ratio_pct"] = dj["jump_ratio"] * PCT
+        dj["drag_qv_pct"] = (dj["drag_cont"] + dj["drag_jump"]) * PCT
         share = float(df["has_jumps"].mean()) * PCT if "has_jumps" in df else float("nan")
         parts += [
             "<h2>드래그의 점프 성분</h2>",
             '<div class="note">이중멱변동은 각 수익률을 이웃과 곱해 점프의 영향을 억제한다. '
-            "<code>RV − BPV</code> 가 점프 분산이며, 드래그는 연속 성분과 점프 성분으로 "
-            f"정확히 분해된다. BNS 검정에서 유의한 점프가 확인된 종목: <strong>{share:.1f}%</strong>.</div>",
+            "<code>RV − BPV</code> 가 점프 분산이며, <strong>실현 이차변동</strong>이 연속 성분과 "
+            "점프 성분으로 정확히 분해된다. 아래 «총» 열은 그 이차변동 기준 드래그로, "
+            "표본분산 기반의 메인 표 값과는 평균수익률 항만큼 다르다. "
+            f"BNS 검정에서 유의한 점프가 확인된 종목: <strong>{share:.1f}%</strong>.</div>",
             _html_table(
                 dj.sort_values("drag_jump", ascending=False).head(top_n),
                 [
                     ("rank", "#"),
                     ("name", "종목"),
                     ("sigma_pct", "σ %"),
-                    ("drag_pct", "총 드래그 %p"),
+                    ("drag_qv_pct", "총 드래그 (QV) %p"),
                     ("drag_cont_pct", "연속 %p"),
                     ("drag_jump_pct", "점프 %p"),
                     ("jump_ratio_pct", "점프 비중 %"),

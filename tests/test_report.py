@@ -315,3 +315,42 @@ def test_count_columns_render_as_integers(screened, tmp_path, analysis):
     assert ranks, "no rank cells found"
     assert all("." not in r for r in ranks), ranks
     assert ranks[0] == "1"
+
+
+def test_jump_table_total_actually_equals_its_components(screened, tmp_path):
+    """The column printed beside 연속/점프 must be their sum.
+
+    DragMetrics.drag comes from the ddof=1 sample variance while the split is
+    built on the raw second moment, so printing `drag` there produced a table
+    that visibly did not add up (8.32 = 8.31 + 0.00) under prose claiming exact
+    decomposition.
+    """
+    text = write_markdown(
+        screened, top_n=5, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+
+    section = text.split("드래그의 점프 성분")[1]
+    table = [r for r in section.splitlines() if r.startswith("|")]
+    assert table, "no jump table rendered"
+
+    header = [c.strip() for c in table[0].strip("|").split("|")]
+    i_total = header.index("총 드래그 (QV) %p")
+    i_cont = header.index("연속 %p")
+    i_jump = header.index("점프 %p")
+
+    body = [r for r in table[1:] if not set(r) <= set("|-: ")]
+    assert body, "no jump rows rendered"
+
+    for row in body:
+        cells = [c.strip() for c in row.strip("|").split("|")]
+        total, cont, jump = float(cells[i_total]), float(cells[i_cont]), float(cells[i_jump])
+        assert total == pytest.approx(cont + jump, abs=0.02), row
+
+
+def test_jump_prose_attributes_exactness_to_quadratic_variation(screened, tmp_path):
+    text = write_markdown(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+    assert "실현 이차변동" in text
+    # the unqualified claim about the sample-variance drag must be gone
+    assert "드래그가 `½σ²_연속 + ½σ²_점프` 로 정확히 분해된다" not in text

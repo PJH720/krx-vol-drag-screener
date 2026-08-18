@@ -188,3 +188,70 @@ def test_nonpositive_prices_are_dropped():
     rd = rolling_drag(prices, window=50)
     assert not rd.empty
     assert np.isfinite(rd["sigma"]).all()
+
+
+# --- gaps in a panel (regression) ------------------------------------------------
+
+def _holed(wide: pd.DataFrame, row: int = 200, col: int = 0) -> pd.DataFrame:
+    out = wide.copy()
+    out.iloc[row, col] = np.nan
+    return out
+
+
+def test_one_missing_price_does_not_erase_a_whole_window(wide_prices):
+    """min_periods == window meant a single NaN wiped ~window consecutive rows.
+
+    Real KRX panels have a NaN for every day a name did not trade, so this
+    silently emptied the market-wide drag series.
+    """
+    clean = rolling_panel(wide_prices, window=126)["A"].notna().sum()
+    holed = rolling_panel(_holed(wide_prices), window=126)["A"].notna().sum()
+
+    assert holed >= clean - 2, f"one NaN cost {clean - holed} rows"
+
+
+def test_cross_section_survives_scattered_gaps(wide_prices):
+    """Every column missing a different day must not collapse the series."""
+    gappy = wide_prices.copy()
+    for i, col in enumerate(gappy.columns):
+        gappy.iloc[150 + 40 * i, i] = np.nan
+
+    full = cross_sectional_drag(wide_prices, window=126, min_names=3)
+    got = cross_sectional_drag(gappy, window=126, min_names=3)
+    assert len(got) >= len(full) - 3
+
+
+def test_min_periods_is_honoured_on_the_panel(wide_prices):
+    """A strict caller can still demand a complete window."""
+    strict = rolling_panel(_holed(wide_prices), window=126, min_periods=126)
+    relaxed = rolling_panel(_holed(wide_prices), window=126, min_periods=60)
+    assert strict["A"].notna().sum() < relaxed["A"].notna().sum()
+
+
+def test_a_window_that_is_mostly_missing_still_yields_nothing(wide_prices):
+    """Relaxing min_periods must not invent estimates from a handful of points."""
+    sparse = wide_prices.copy()
+    sparse.iloc[100:260, 0] = np.nan
+    panel = rolling_panel(sparse, window=126)
+    # the windows sitting inside the hole cannot reach the default threshold
+    assert panel["A"].iloc[120:150].isna().all()
+
+
+def test_panel_and_single_series_differ_on_gaps_as_documented(wide_prices):
+    """The two paths are not interchangeable once a gap exists, by design.
+
+    rolling_panel keeps calendar alignment (a gap shrinks the effective sample);
+    rolling_drag on a Series compresses the gap away. Pinning this so the
+    difference stays deliberate rather than becoming a surprise.
+    """
+    holed = _holed(wide_prices)
+    panel = rolling_panel(holed, window=126)["A"].dropna()
+    single = rolling_drag(holed["A"], window=126)["drag"]
+
+    assert len(panel) != len(single)
+    # but on clean data they agree exactly
+    assert np.allclose(
+        rolling_panel(wide_prices, window=126)["A"].dropna(),
+        rolling_drag(wide_prices["A"], window=126)["drag"],
+        atol=1e-12,
+    )

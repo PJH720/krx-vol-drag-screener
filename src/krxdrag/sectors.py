@@ -98,7 +98,12 @@ def sector_portfolio_drag(
         .apply(lambda s: [sym for sym in s if sym in wide.columns])
     )
 
-    simple = wide.astype(float).pct_change()
+    # fill_method=None explicitly: on pandas 2.x the default is 'pad', which
+    # forward-fills a halted name into a run of fabricated 0% returns followed
+    # by one catch-up jump. That understates portfolio variance, biases
+    # portfolio_drag low and drag_saved high -- overstating the very
+    # diversification benefit this function exists to measure.
+    simple = wide.astype(float).pct_change(fill_method=None)
 
     rows: list[dict] = []
     for sector, symbols in members.items():

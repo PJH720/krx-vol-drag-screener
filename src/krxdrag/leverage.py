@@ -50,9 +50,21 @@ class LeveragedETF:
     underlying: str       # KRX code of the 1x reference product
     market: str = "KOSPI"
 
+    @staticmethod
+    def _yf(code: str, market: str) -> str:
+        return f"{code}.KS" if market == "KOSPI" else f"{code}.KQ"
+
     @property
     def symbol(self) -> str:
-        return f"{self.code}.KS" if self.market == "KOSPI" else f"{self.code}.KQ"
+        return self._yf(self.code, self.market)
+
+    @property
+    def underlying_symbol(self) -> str:
+        """yfinance symbol of the 1x reference product.
+
+        Equals `symbol` for the baseline rows, where code == underlying.
+        """
+        return self._yf(self.underlying, self.market)
 
 
 # Seed table of KRX geared ETFs. Multiples are as marketed; every one of them is
@@ -239,11 +251,16 @@ def audit_leveraged_etfs(
 
     rows: list[dict] = []
     for etf in products:
-        under_symbol = f"{etf.underlying}.KS" if etf.market == "KOSPI" else f"{etf.underlying}.KQ"
+        under_symbol = etf.underlying_symbol
         if etf.symbol not in wide.columns or under_symbol not in wide.columns:
             continue
 
-        pair = wide[[etf.symbol, under_symbol]].dropna()
+        # The 1x baselines are their own underlying. Selecting the same label
+        # twice would hand back a two-column frame, and the downstream
+        # .to_numpy() would flatten it into an interleaved series -- so ask for
+        # the column once and reuse it.
+        wanted = [etf.symbol] if etf.symbol == under_symbol else [etf.symbol, under_symbol]
+        pair = wide[wanted].dropna()
         if len(pair) < 60:
             continue
 

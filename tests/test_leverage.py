@@ -229,3 +229,45 @@ def test_audit_degrades_to_empty_when_nothing_is_priced():
     """Offline, with no ETF prices at all, the section simply disappears."""
     unrelated = pd.DataFrame({"005930.KS": simulate_gbm(0.05, 0.2, 300, seed=1)})
     assert audit_leveraged_etfs(unrelated).empty
+
+
+# --- self-referential 1x products (regression) ---------------------------------
+
+def test_a_one_x_product_that_is_its_own_underlying_reports_the_underlying():
+    """069500 and 229200 ship with code == underlying.
+
+    Selecting wide[[sym, sym]] yields duplicate columns, so pair[sym] is a
+    2-D frame and log_returns flattens it into an interleaved [0, r1, 0, r2, ...]
+    series -- every metric on the row comes out wrong.
+    """
+    underlying = simulate_gbm(mu=0.08, sigma=0.30, n_days=300, seed=5)
+    truth = compute_drag(underlying)
+    wide = pd.DataFrame({"069500.KS": underlying})
+
+    row = audit_leveraged_etfs(
+        wide, products=(LeveragedETF("069500", "KODEX 200", 1.0, "069500"),)
+    ).iloc[0]
+
+    assert row["underlying_sigma"] == pytest.approx(truth.sigma, rel=1e-9)
+    assert row["actual_g"] == pytest.approx(truth.g, rel=1e-9)
+    assert row["realized_leverage"] == pytest.approx(1.0, abs=1e-9)
+    assert not row["leverage_mismatch"]
+
+
+def test_every_shipped_self_referential_product_is_clean():
+    """Whatever the table holds, no 1x self-reference may distort its own row."""
+    selfref = [e for e in KRX_LEVERAGED_ETFS if e.code == e.underlying]
+    assert selfref, "the table is expected to carry 1x baselines"
+
+    underlying = simulate_gbm(mu=0.06, sigma=0.25, n_days=400, seed=6)
+    truth = compute_drag(underlying)
+    for etf in selfref:
+        wide = pd.DataFrame({etf.symbol: underlying})
+        row = audit_leveraged_etfs(wide, products=(etf,)).iloc[0]
+        assert row["underlying_sigma"] == pytest.approx(truth.sigma, rel=1e-9), etf.code
+
+
+def test_underlying_symbol_property_matches_symbol_construction():
+    for etf in KRX_LEVERAGED_ETFS:
+        twin = LeveragedETF(etf.underlying, "x", 1.0, etf.underlying, etf.market)
+        assert etf.underlying_symbol == twin.symbol
