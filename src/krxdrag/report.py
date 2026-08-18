@@ -19,16 +19,27 @@ def _fmt_table(df: pd.DataFrame, cols: list[tuple[str, str]]) -> str:
     return view.to_markdown(index=False, floatfmt=".2f")
 
 
-def write_csv(df: pd.DataFrame, out_dir: Path | None = None) -> Path:
+def write_csv(
+    df: pd.DataFrame,
+    out_dir: Path | None = None,
+    run_date: date | None = None,
+) -> Path:
     out_dir = out_dir or REPORT_DIR
-    path = out_dir / f"krx_drag_{date.today():%Y%m%d}.csv"
+    run_date = run_date or date.today()
+    path = out_dir / f"krx_drag_{run_date:%Y%m%d}.csv"
     df.to_csv(path, index=False, encoding="utf-8-sig")
     return path
 
 
-def write_markdown(df: pd.DataFrame, top_n: int = 25, out_dir: Path | None = None) -> Path:
+def write_markdown(
+    df: pd.DataFrame,
+    top_n: int = 25,
+    out_dir: Path | None = None,
+    run_date: date | None = None,
+) -> Path:
     out_dir = out_dir or REPORT_DIR
-    path = out_dir / f"krx_drag_{date.today():%Y%m%d}.md"
+    run_date = run_date or date.today()
+    path = out_dir / f"krx_drag_{run_date:%Y%m%d}.md"
     s = summarise(df)
 
     d = df.copy()
@@ -53,7 +64,7 @@ def write_markdown(df: pd.DataFrame, top_n: int = 25, out_dir: Path | None = Non
     trap = d[(d["mu"] > 0) & (d["g"] < 0)].sort_values("drag", ascending=False).head(top_n)
 
     lines = [
-        f"# KRX 변동성 드래그 리포트 — {date.today():%Y-%m-%d}",
+        f"# KRX 변동성 드래그 리포트 — {run_date:%Y-%m-%d}",
         "",
         "산술 드리프트 μ 와 기하 성장률 g 의 차이는 Itô 보정항 ½σ² 과 정확히 같다.",
         "이 값이 **변동성 드래그**이며, 기대수익률 중 복리 실현에 도달하지 못하는 부분이다.",
@@ -96,7 +107,11 @@ def write_markdown(df: pd.DataFrame, top_n: int = 25, out_dir: Path | None = Non
     return path
 
 
-def write_chart(df: pd.DataFrame, out_dir: Path | None = None) -> Path | None:
+def write_chart(
+    df: pd.DataFrame,
+    out_dir: Path | None = None,
+    run_date: date | None = None,
+) -> Path | None:
     """Scatter of sigma vs the mu/g wedge, with the theoretical 0.5*sigma^2 curve."""
     try:
         import matplotlib
@@ -108,7 +123,8 @@ def write_chart(df: pd.DataFrame, out_dir: Path | None = None) -> Path | None:
         return None
 
     out_dir = out_dir or REPORT_DIR
-    path = out_dir / f"krx_drag_{date.today():%Y%m%d}.png"
+    run_date = run_date or date.today()
+    path = out_dir / f"krx_drag_{run_date:%Y%m%d}.png"
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
 

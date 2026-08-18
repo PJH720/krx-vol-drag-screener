@@ -77,9 +77,11 @@ def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFr
 
     df = pd.DataFrame(rows)
 
-    # Sanity guard: the Itô identity must hold exactly for every row.
-    residual = np.abs((df["mu"] - df["g"]) - df["drag"]).max()
-    assert residual < 1e-10, f"Ito identity violated, max residual {residual}"
+    # Sanity guard: the Itô identity must hold exactly for every row. A bare
+    # assert would vanish under `python -O`, and this check is load-bearing.
+    residual = float(np.abs((df["mu"] - df["g"]) - df["drag"]).max())
+    if not residual < 1e-10:
+        raise ValueError(f"Ito identity violated, max residual {residual}")
 
     df = df.sort_values("drag", ascending=False).reset_index(drop=True)
     df.insert(0, "rank", np.arange(1, len(df) + 1))
