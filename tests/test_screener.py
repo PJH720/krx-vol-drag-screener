@@ -122,3 +122,14 @@ def test_jump_decomposition_can_be_switched_off(offline_screen):
     df = screen(_cfg(decompose_jumps=False), use_cache=False)
     assert "drag_cont" not in df.columns
     assert not df.empty
+
+
+def test_drag_trend_column_is_present(offline_screen):
+    df = screen(_cfg(rolling_window=126), use_cache=False)
+    assert "drag_trend" in df.columns
+    assert np.isfinite(df["drag_trend"]).all()
+
+
+def test_rolling_window_zero_disables_the_trend_column(offline_screen):
+    df = screen(_cfg(rolling_window=0), use_cache=False)
+    assert "drag_trend" not in df.columns

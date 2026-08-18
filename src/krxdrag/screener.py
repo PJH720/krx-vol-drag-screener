@@ -12,6 +12,7 @@ from .data import load_prices, median_turnover, to_wide
 from .diagnostics import compute_diagnostics
 from .jumps import decompose_jumps
 from .metrics import compute_drag, log_returns
+from .rolling import drag_trend
 from .universe import load_universe
 
 log = logging.getLogger(__name__)
@@ -77,6 +78,12 @@ def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFr
             if j is not None:
                 # n_obs is already on the row from DragMetrics and agrees
                 row.update({k: v for k, v in j.to_dict().items() if k != "n_obs"})
+        if cfg.rolling_window:
+            row["drag_trend"] = drag_trend(
+                series,
+                window=cfg.rolling_window,
+                periods_per_year=cfg.periods_per_year,
+            )
         rows.append(row)
 
     if not rows:
