@@ -6,9 +6,25 @@ import argparse
 import logging
 import sys
 
+import pandas as pd
+
 from .config import ScreenConfig
-from .report import write_chart, write_csv, write_markdown
-from .screener import screen, summarise
+from .data import load_prices, to_wide  # to_wide is used by the ETF audit
+from .leverage import KRX_LEVERAGED_ETFS, audit_leveraged_etfs
+from .report import (
+    write_chart,
+    write_csv,
+    write_html,
+    write_leverage_chart,
+    write_markdown,
+    write_rolling_chart,
+    write_sector_chart,
+)
+from .rolling import cross_sectional_drag
+from .screener import screen_panel, summarise
+from .sectors import aggregate_sectors, diversification_benefit, sector_portfolio_drag
+
+log = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,9 +48,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--max-names", type=int, default=None, help="cap universe size")
     p.add_argument("--top", type=int, default=25, help="rows per report table")
+    p.add_argument(
+        "--rolling-window",
+        type=int,
+        default=126,
+        help="trading days for the rolling drag window; 0 disables",
+    )
+    p.add_argument(
+        "--min-sector-names",
+        type=int,
+        default=5,
+        help="drop sectors holding fewer names than this",
+    )
+    p.add_argument("--no-sectors", action="store_true", help="skip sector aggregation")
+    p.add_argument("--no-jumps", action="store_true", help="skip the jump decomposition")
+    p.add_argument(
+        "--etf",
+        action="store_true",
+        help="audit KRX leveraged ETFs (downloads extra price history)",
+    )
+    p.add_argument("--html", action="store_true", help="also write a self-contained HTML report")
     p.add_argument("--no-cache", action="store_true")
     p.add_argument("--quiet", action="store_true")
     return p
+
+
+def _etf_audit(cfg: ScreenConfig, use_cache: bool) -> pd.DataFrame:
+    """Download the geared products and check their delivered multiples."""
+    symbols = sorted(
+        {e.symbol for e in KRX_LEVERAGED_ETFS}
+        | {f"{e.underlying}.KS" for e in KRX_LEVERAGED_ETFS if e.market == "KOSPI"}
+        | {f"{e.underlying}.KQ" for e in KRX_LEVERAGED_ETFS if e.market != "KOSPI"}
+    )
+    try:
+        prices = load_prices(symbols, lookback_days=cfg.lookback_days, use_cache=use_cache)
+    except Exception as exc:  # the ETF section is optional; never sink the run
+        log.warning("etf: price download failed: %s", exc)
+        return pd.DataFrame()
+
+    if prices.empty:
+        log.warning("etf: no prices returned, skipping the leverage audit")
+        return pd.DataFrame()
+
+    wide = to_wide(prices).tail(cfg.lookback_days)
+    return audit_leveraged_etfs(wide, periods_per_year=cfg.periods_per_year)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -44,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s  %(message)s",
         datefmt="%H:%M:%S",
     )
+    use_cache = not args.no_cache
 
     cfg = ScreenConfig(
         lookback_days=args.lookback,
@@ -51,16 +109,72 @@ def main(argv: list[str] | None = None) -> int:
         min_median_turnover=args.min_turnover,
         markets=tuple(args.markets),
         max_names=args.max_names,
+        decompose_jumps=not args.no_jumps,
+        rolling_window=args.rolling_window,
     )
 
-    df = screen(cfg, use_cache=not args.no_cache)
+    # screen_panel hands back the price matrix it already built, so the sector
+    # and rolling layers below reuse it instead of downloading the universe a
+    # second time.
+    df, wide = screen_panel(cfg, use_cache=use_cache)
     if df.empty:
         print("No names passed the filters.", file=sys.stderr)
         return 1
 
+    # --- optional analysis layers ---------------------------------------
+    sectors = diversification = rolling = None
+    sector_labels: dict[str, str] = {}
+
+    if not args.no_sectors:
+        sectors = aggregate_sectors(df, min_names=args.min_sector_names)
+
+    if not wide.empty:
+        wide = wide[[c for c in wide.columns if c in set(df["symbol"])]]
+        if sectors is not None and not sectors.empty:
+            portfolios = sector_portfolio_drag(
+                wide, df[["symbol", "sector"]], min_names=args.min_sector_names
+            )
+            diversification = diversification_benefit(sectors, portfolios)
+        if args.rolling_window:
+            rolling = cross_sectional_drag(
+                wide, window=args.rolling_window, periods_per_year=cfg.periods_per_year
+            )
+
+    etfs = _etf_audit(cfg, use_cache) if args.etf else None
+
+    # --- output ----------------------------------------------------------
+    charts: dict[str, object] = {"main": write_chart(df)}
+    if rolling is not None and not rolling.empty:
+        charts["rolling"] = write_rolling_chart(rolling, window=args.rolling_window)
+    if sectors is not None and not sectors.empty:
+        result = write_sector_chart(sectors, diversification)
+        if result is not None:
+            charts["sectors"], sector_labels = result
+    charts["leverage"] = write_leverage_chart()
+
     csv_path = write_csv(df)
-    md_path = write_markdown(df, top_n=args.top)
-    png_path = write_chart(df)
+    md_path = write_markdown(
+        df,
+        top_n=args.top,
+        sectors=sectors,
+        diversification=diversification,
+        rolling=rolling,
+        etfs=etfs,
+        rolling_window=args.rolling_window,
+    )
+    html_path = None
+    if args.html:
+        html_path = write_html(
+            df,
+            top_n=args.top,
+            sectors=sectors,
+            diversification=diversification,
+            rolling=rolling,
+            etfs=etfs,
+            rolling_window=args.rolling_window,
+            charts=charts,
+            sector_labels=sector_labels,
+        )
 
     s = summarise(df)
     print()
@@ -69,11 +183,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  median drag       : {s['median_drag'] * 100:.1f}%p")
     print(f"  median drag / mu  : {s['median_drag_ratio'] * 100:.1f}%")
     print(f"  mu>0 but g<0      : {s['share_g_negative_mu_positive'] * 100:.1f}%")
+    if sectors is not None and not sectors.empty:
+        print(f"  sectors reported  : {len(sectors):,}")
+    if "drag_jump" in df.columns:
+        print(f"  median jump share : {df['jump_ratio'].median() * 100:.1f}%")
     print()
     print(f"  csv  -> {csv_path}")
     print(f"  md   -> {md_path}")
-    if png_path:
-        print(f"  png  -> {png_path}")
+    for label, path in charts.items():
+        if path:
+            print(f"  png  -> {path}  ({label})")
+    if html_path:
+        print(f"  html -> {html_path}")
     return 0
 
 

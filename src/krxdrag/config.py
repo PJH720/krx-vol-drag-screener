@@ -32,3 +32,5 @@ class ScreenConfig:
     batch_size: int = 60              # yfinance tickers per request
     periods_per_year: int = 252
     confidence: float = 0.95
+    decompose_jumps: bool = True     # split drag into continuous / jump parts
+    rolling_window: int = 126        # trading days for drag_trend; 0 disables

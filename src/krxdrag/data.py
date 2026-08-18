@@ -103,8 +103,14 @@ def load_prices(
 
 
 def to_wide(prices: pd.DataFrame) -> pd.DataFrame:
-    """Pivot long price frame to a date x symbol close matrix."""
-    return prices.pivot(index="date", columns="symbol", values="close").sort_index()
+    """Pivot long price frame to a date x symbol close matrix.
+
+    Batches are not supposed to overlap, but a single retried or duplicated
+    batch would make pivot() raise and sink the whole run, so collapse any
+    duplicate (date, symbol) pair to its last observation first.
+    """
+    deduped = prices.drop_duplicates(subset=["date", "symbol"], keep="last")
+    return deduped.pivot(index="date", columns="symbol", values="close").sort_index()
 
 
 def median_turnover(prices: pd.DataFrame) -> pd.Series:

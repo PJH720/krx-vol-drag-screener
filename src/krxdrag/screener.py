@@ -10,7 +10,9 @@ import pandas as pd
 from .config import ScreenConfig
 from .data import load_prices, median_turnover, to_wide
 from .diagnostics import compute_diagnostics
+from .jumps import decompose_jumps
 from .metrics import compute_drag, log_returns
+from .rolling import drag_trend
 from .universe import load_universe
 
 log = logging.getLogger(__name__)
@@ -18,6 +20,19 @@ log = logging.getLogger(__name__)
 
 def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFrame:
     """Run the full screen and return one row per surviving symbol."""
+    return screen_panel(cfg, use_cache=use_cache)[0]
+
+
+def screen_panel(
+    cfg: ScreenConfig | None = None,
+    use_cache: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The screen, plus the price matrix it was computed from.
+
+    The sector and rolling layers need that same date x symbol matrix. Handing
+    it back costs nothing here and saves the caller a second download of the
+    whole universe -- roughly 1,100 tickers under --no-cache.
+    """
     cfg = cfg or ScreenConfig()
 
     universe = load_universe(markets=cfg.markets, use_cache=use_cache)
@@ -32,7 +47,7 @@ def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFr
         use_cache=use_cache,
     )
     if prices.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
     turnover = median_turnover(prices)
     wide = to_wide(prices).tail(cfg.lookback_days)
@@ -56,7 +71,8 @@ def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFr
         if tv < cfg.min_median_turnover:
             continue
 
-        d = compute_diagnostics(log_returns(series))
+        returns = log_returns(series)
+        d = compute_diagnostics(returns)
         info = meta.loc[symbol]
 
         row: dict = {
@@ -70,21 +86,34 @@ def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFr
         }
         if d is not None:
             row.update(d.to_dict())
+        if cfg.decompose_jumps:
+            j = decompose_jumps(returns, periods_per_year=cfg.periods_per_year)
+            if j is not None:
+                # n_obs is already on the row from DragMetrics and agrees
+                row.update({k: v for k, v in j.to_dict().items() if k != "n_obs"})
+        if cfg.rolling_window:
+            row["drag_trend"] = drag_trend(
+                series,
+                window=cfg.rolling_window,
+                periods_per_year=cfg.periods_per_year,
+            )
         rows.append(row)
 
     if not rows:
-        return pd.DataFrame()
+        return pd.DataFrame(), wide
 
     df = pd.DataFrame(rows)
 
-    # Sanity guard: the Itô identity must hold exactly for every row.
-    residual = np.abs((df["mu"] - df["g"]) - df["drag"]).max()
-    assert residual < 1e-10, f"Ito identity violated, max residual {residual}"
+    # Sanity guard: the Itô identity must hold exactly for every row. A bare
+    # assert would vanish under `python -O`, and this check is load-bearing.
+    residual = float(np.abs((df["mu"] - df["g"]) - df["drag"]).max())
+    if not residual < 1e-10:
+        raise ValueError(f"Ito identity violated, max residual {residual}")
 
     df = df.sort_values("drag", ascending=False).reset_index(drop=True)
     df.insert(0, "rank", np.arange(1, len(df) + 1))
     log.info("screen: %d names passed filters", len(df))
-    return df
+    return df, wide
 
 
 def summarise(df: pd.DataFrame) -> dict[str, float]:
