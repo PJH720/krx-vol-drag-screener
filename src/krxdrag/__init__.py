@@ -10,6 +10,11 @@ from .jumps import JumpMetrics, decompose_jumps, simulate_jump_diffusion
 from .metrics import DragMetrics, compute_drag, log_returns, simulate_gbm
 from .rolling import cross_sectional_drag, drag_trend, rolling_drag, rolling_panel
 from .screener import screen, summarise
+from .sectors import (
+    aggregate_sectors,
+    diversification_benefit,
+    sector_portfolio_drag,
+)
 
 __version__ = "0.1.0"
 
@@ -30,4 +35,7 @@ __all__ = [
     "rolling_panel",
     "screen",
     "summarise",
+    "aggregate_sectors",
+    "diversification_benefit",
+    "sector_portfolio_drag",
 ]
