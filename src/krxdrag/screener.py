@@ -20,6 +20,19 @@ log = logging.getLogger(__name__)
 
 def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFrame:
     """Run the full screen and return one row per surviving symbol."""
+    return screen_panel(cfg, use_cache=use_cache)[0]
+
+
+def screen_panel(
+    cfg: ScreenConfig | None = None,
+    use_cache: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The screen, plus the price matrix it was computed from.
+
+    The sector and rolling layers need that same date x symbol matrix. Handing
+    it back costs nothing here and saves the caller a second download of the
+    whole universe -- roughly 1,100 tickers under --no-cache.
+    """
     cfg = cfg or ScreenConfig()
 
     universe = load_universe(markets=cfg.markets, use_cache=use_cache)
@@ -34,7 +47,7 @@ def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFr
         use_cache=use_cache,
     )
     if prices.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
     turnover = median_turnover(prices)
     wide = to_wide(prices).tail(cfg.lookback_days)
@@ -87,7 +100,7 @@ def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFr
         rows.append(row)
 
     if not rows:
-        return pd.DataFrame()
+        return pd.DataFrame(), wide
 
     df = pd.DataFrame(rows)
 
@@ -100,7 +113,7 @@ def screen(cfg: ScreenConfig | None = None, use_cache: bool = True) -> pd.DataFr
     df = df.sort_values("drag", ascending=False).reset_index(drop=True)
     df.insert(0, "rank", np.arange(1, len(df) + 1))
     log.info("screen: %d names passed filters", len(df))
-    return df
+    return df, wide
 
 
 def summarise(df: pd.DataFrame) -> dict[str, float]:

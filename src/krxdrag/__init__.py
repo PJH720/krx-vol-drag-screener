@@ -20,7 +20,7 @@ from .leverage import (
 )
 from .metrics import DragMetrics, compute_drag, log_returns, simulate_gbm
 from .rolling import cross_sectional_drag, drag_trend, rolling_drag, rolling_panel
-from .screener import screen, summarise
+from .screener import screen, screen_panel, summarise
 from .sectors import (
     aggregate_sectors,
     diversification_benefit,
@@ -54,6 +54,7 @@ __all__ = [
     "rolling_drag",
     "rolling_panel",
     "screen",
+    "screen_panel",
     "summarise",
     "aggregate_sectors",
     "diversification_benefit",

@@ -271,3 +271,26 @@ def test_underlying_symbol_property_matches_symbol_construction():
     for etf in KRX_LEVERAGED_ETFS:
         twin = LeveragedETF(etf.underlying, "x", 1.0, etf.underlying, etf.market)
         assert etf.underlying_symbol == twin.symbol
+
+
+# --- costs -----------------------------------------------------------------
+
+def test_audit_applies_fees_to_the_theoretical_figure():
+    """Without a cost input, actual_g sits below theoretical_g for every real
+    product and the reader reads a known charge as tracking error."""
+    underlying = simulate_gbm(mu=0.09, sigma=0.30, n_days=800, seed=61)
+    wide = pd.DataFrame(
+        {"069500.KS": underlying, "122630.KS": simulate_leveraged_path(underlying, 2.0)}
+    )
+    products = (LeveragedETF("122630", "KODEX 레버리지", 2.0, "069500"),)
+
+    free = audit_leveraged_etfs(wide, products=products).iloc[0]
+    charged = audit_leveraged_etfs(
+        wide, products=products, fee=0.008, financing=0.03
+    ).iloc[0]
+
+    assert free["cost"] == 0.0
+    assert charged["cost"] == pytest.approx(0.008 + 0.03)
+    assert charged["theoretical_g"] == pytest.approx(
+        free["theoretical_g"] - charged["cost"]
+    )

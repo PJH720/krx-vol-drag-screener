@@ -739,6 +739,12 @@ def write_html(
     trap = d[(d["mu"] > 0) & (d["g"] < 0)].sort_values("drag", ascending=False).head(top_n)
 
     parts: list[str] = [
+        # Without an in-document charset there is no Content-Type either (the
+        # page is opened from file://), so the browser decodes this almost
+        # entirely Hangul document with its locale default and renders mojibake.
+        "<!doctype html>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
         f"<title>KRX 변동성 드래그 — {run_date:%Y-%m-%d}</title>",
         f"<style>{_CSS}</style>",
         "<main>",
@@ -793,13 +799,17 @@ def write_html(
             ),
         ]
         if sector_labels:
-            rows = "".join(
-                f"<tr><td>{html.escape(k)}</td><td>{html.escape(v)}</td></tr>"
-                for k, v in sector_labels.items()
-            )
+            # Built through _html_table so the cells carry the data-v keys the
+            # sort script reads. Hand-rolled <td>s left every header looking
+            # clickable (cursor, hover colour, the ⇅ affordance) while doing
+            # nothing.
             parts.append(
-                '<div class="scroll"><table><thead><tr><th>라벨</th><th>업종</th></tr>'
-                f"</thead><tbody>{rows}</tbody></table></div>"
+                _html_table(
+                    pd.DataFrame(
+                        {"label": list(sector_labels), "sector": list(sector_labels.values())}
+                    ),
+                    [("label", "라벨"), ("sector", "업종")],
+                )
             )
         parts.append(
             _html_table(

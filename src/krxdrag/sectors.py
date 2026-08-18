@@ -42,7 +42,12 @@ def aggregate_sectors(
         return pd.DataFrame()
 
     d = df.dropna(subset=["sector"]).copy()
-    d = d[d["sector"].astype(str).str.strip() != ""]
+    # Group on the stripped label, not the raw one. sector_portfolio_drag()
+    # strips before grouping, so grouping on ' 화학' here while it produces
+    # '화학' would make diversification_benefit's inner merge drop the sector
+    # without a word -- and split one sector into two rows in the leaderboard.
+    d["sector"] = d["sector"].astype(str).str.strip()
+    d = d[d["sector"] != ""]
     if d.empty:
         return pd.DataFrame()
 
@@ -66,9 +71,9 @@ def aggregate_sectors(
 
     out = pd.DataFrame(agg)
     out = out[out["n_names"] >= min_names]
-    if out.empty:
-        return out
-
+    # Reset and rank before the empty check so the frame has the same columns
+    # either way; returning a differently shaped result on the empty path made
+    # ['sector'] and ['rank'] raise for callers that did not guard on .empty.
     out = out.sort_values("median_drag", ascending=False)
     out.insert(0, "rank", np.arange(1, len(out) + 1))
     return out.reset_index()

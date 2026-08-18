@@ -354,3 +354,30 @@ def test_jump_prose_attributes_exactness_to_quadratic_variation(screened, tmp_pa
     assert "실현 이차변동" in text
     # the unqualified claim about the sample-variance drag must be gone
     assert "드래그가 `½σ²_연속 + ½σ²_점프` 로 정확히 분해된다" not in text
+
+
+def test_html_declares_its_encoding(screened, tmp_path):
+    """No Content-Type exists over file://, so the charset must be in-document.
+
+    Without it a browser decodes this Hangul page with its locale default.
+    """
+    text = write_html(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+
+    assert text.lstrip().lower().startswith("<!doctype html>")
+    assert '<meta charset="utf-8">' in text
+    assert 'name="viewport"' in text
+
+
+def test_sector_label_table_cells_are_sortable(screened, tmp_path, analysis):
+    """Every header advertises sorting, so every table must actually sort."""
+    charts = {"sectors": None}
+    labels = {"S01": "화학", "S02": "전자부품 제조업"}
+    text = write_html(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE,
+        charts=charts, sector_labels=labels, **analysis
+    ).read_text(encoding="utf-8")
+
+    assert 'data-v="S01"' in text
+    assert 'data-v="화학"' in text

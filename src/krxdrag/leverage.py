@@ -241,11 +241,20 @@ def audit_leveraged_etfs(
     products: tuple[LeveragedETF, ...] = KRX_LEVERAGED_ETFS,
     periods_per_year: int = TRADING_DAYS,
     tolerance: float = LEVERAGE_TOLERANCE,
+    fee: float = 0.0,
+    financing: float = 0.0,
 ) -> pd.DataFrame:
     """Check each product's declared multiple against the one it delivered.
 
     `wide` is a date x symbol close matrix. Products whose prices are absent are
     skipped, so this degrades to an empty frame offline rather than raising.
+
+    `fee` (annual expense ratio) and `financing` (annual rate on the geared
+    portion) feed the theoretical growth figure. They default to zero, but
+    leaving them there makes actual_g sit persistently below theoretical_g for
+    every real product and invites the reader to mistake a known, quantifiable
+    cost for unexplained tracking error -- KRX geared ETFs charge roughly
+    0.3-1.0%/yr plus roll cost. Pass what the product actually charges.
     """
     from .metrics import compute_drag
 
@@ -273,7 +282,7 @@ def audit_leveraged_etfs(
             continue
 
         slope, r2 = estimate_realized_leverage(fund, under)
-        theory = leveraged_metrics(under_m, etf.leverage)
+        theory = leveraged_metrics(under_m, etf.leverage, fee=fee, financing=financing)
 
         rows.append(
             {
@@ -289,6 +298,7 @@ def audit_leveraged_etfs(
                 "underlying_drag": under_m.drag,
                 "theoretical_g": theory.levered_g,
                 "actual_g": fund_m.g,
+                "cost": theory.cost,
                 "drag_penalty": theory.drag_penalty,
                 "critical_sigma": theory.critical_sigma,
             }

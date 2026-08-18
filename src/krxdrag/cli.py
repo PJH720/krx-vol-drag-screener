@@ -9,7 +9,7 @@ import sys
 import pandas as pd
 
 from .config import ScreenConfig
-from .data import load_prices, to_wide
+from .data import load_prices, to_wide  # to_wide is used by the ETF audit
 from .leverage import KRX_LEVERAGED_ETFS, audit_leveraged_etfs
 from .report import (
     write_chart,
@@ -21,7 +21,7 @@ from .report import (
     write_sector_chart,
 )
 from .rolling import cross_sectional_drag
-from .screener import screen, summarise
+from .screener import screen_panel, summarise
 from .sectors import aggregate_sectors, diversification_benefit, sector_portfolio_drag
 
 log = logging.getLogger(__name__)
@@ -113,7 +113,10 @@ def main(argv: list[str] | None = None) -> int:
         rolling_window=args.rolling_window,
     )
 
-    df = screen(cfg, use_cache=use_cache)
+    # screen_panel hands back the price matrix it already built, so the sector
+    # and rolling layers below reuse it instead of downloading the universe a
+    # second time.
+    df, wide = screen_panel(cfg, use_cache=use_cache)
     if df.empty:
         print("No names passed the filters.", file=sys.stderr)
         return 1
@@ -125,18 +128,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_sectors:
         sectors = aggregate_sectors(df, min_names=args.min_sector_names)
 
-    wide = pd.DataFrame()
-    if (not args.no_sectors) or args.rolling_window:
-        prices = load_prices(
-            df["symbol"].tolist(),
-            lookback_days=cfg.lookback_days,
-            batch_size=cfg.batch_size,
-            use_cache=use_cache,
-        )
-        if not prices.empty:
-            wide = to_wide(prices).tail(cfg.lookback_days)
-
     if not wide.empty:
+        wide = wide[[c for c in wide.columns if c in set(df["symbol"])]]
         if sectors is not None and not sectors.empty:
             portfolios = sector_portfolio_drag(
                 wide, df[["symbol", "sector"]], min_names=args.min_sector_names

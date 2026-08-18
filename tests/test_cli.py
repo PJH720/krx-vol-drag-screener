@@ -151,3 +151,37 @@ def test_parser_defaults_match_the_documented_ones():
 def test_parser_rejects_an_unknown_market():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["--markets", "NASDAQ"])
+
+
+def test_the_universe_is_downloaded_once(monkeypatch, offline_cli, synthetic_prices):
+    """screen() built a price panel and threw it away; main() then refetched it.
+
+    Under --no-cache that was a second full download of ~1,100 tickers.
+    """
+    from krxdrag import screener
+
+    calls = {"n": 0}
+    real = screener.load_prices
+
+    def counting(symbols, **kw):
+        calls["n"] += 1
+        return synthetic_prices[synthetic_prices["symbol"].isin(symbols)].reset_index(
+            drop=True
+        )
+
+    monkeypatch.setattr(screener, "load_prices", counting)
+
+    assert main(BASE_ARGS + ["--min-sector-names", "2", "--no-cache"]) == 0
+    assert calls["n"] == 1, f"price panel fetched {calls['n']} times"
+
+
+def test_screen_panel_returns_the_matrix_the_screen_used(offline_screen):
+    from krxdrag.config import ScreenConfig
+    from krxdrag.screener import screen_panel
+
+    df, wide = screen_panel(
+        ScreenConfig(lookback_days=600, min_median_turnover=1e8, batch_size=8),
+        use_cache=False,
+    )
+    assert not df.empty and not wide.empty
+    assert set(df["symbol"]) <= set(wide.columns)

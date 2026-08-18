@@ -241,3 +241,33 @@ def test_a_halted_name_does_not_deflate_portfolio_drag(correlated_panel):
     # dropping one name's month of data should not move the estimate much, and
     # certainly must not collapse it toward zero the way padding would
     assert holed == pytest.approx(clean, rel=0.25)
+
+
+def test_sector_keys_are_stripped_so_the_diversification_merge_holds(correlated_panel):
+    """aggregate_sectors filtered on the stripped label but grouped on the raw
+    one, while sector_portfolio_drag grouped on the stripped value -- the inner
+    merge then dropped any sector whose label carried whitespace."""
+    wide, universe = correlated_panel
+    padded = universe.assign(sector=" factor ")
+
+    screen_like = pd.DataFrame(
+        [
+            _screen_row(c, " factor ", compute_drag(wide[c].to_numpy()).sigma, 0.05)
+            for c in wide.columns
+        ]
+    )
+    table = aggregate_sectors(screen_like, min_names=3)
+    assert table.iloc[0]["sector"] == "factor"
+
+    portfolio = sector_portfolio_drag(wide, padded, min_names=3)
+    assert not diversification_benefit(table, portfolio).empty
+
+
+def test_empty_result_keeps_the_same_columns(hand_built):
+    """The empty path used to return 'sector' as the index and no 'rank'."""
+    full = aggregate_sectors(hand_built, min_names=3)
+    empty = aggregate_sectors(hand_built, min_names=999)
+
+    assert empty.empty
+    assert list(empty.columns) == list(full.columns)
+    assert "sector" in empty.columns and "rank" in empty.columns
