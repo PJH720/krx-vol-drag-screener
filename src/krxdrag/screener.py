@@ -8,12 +8,13 @@ import numpy as np
 import pandas as pd
 
 from .config import ScreenConfig
-from .data import load_prices, median_turnover, to_wide
+from .data import load_prices, median_turnover, to_bars, to_wide
 from .diagnostics import compute_diagnostics
 from .jumps import decompose_jumps
 from .metrics import compute_drag, log_returns
 from .rolling import drag_trend
 from .universe import load_universe
+from .volatility import estimate_all
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +98,22 @@ def screen_panel(
                 window=cfg.rolling_window,
                 periods_per_year=cfg.periods_per_year,
             )
+        if cfg.range_volatility:
+            v = estimate_all(
+                to_bars(prices, symbol), periods_per_year=cfg.periods_per_year
+            )
+            if v is not None:
+                # Added beside sigma_sq, never in place of it. The chi-square
+                # interval and standard errors in metrics.py are derived for the
+                # sample variance and do not transfer to a range estimate, and
+                # the range figures carry a liquidity-correlated bias that has
+                # to stay visible rather than be folded into the headline drag.
+                d = v.to_dict()
+                for name in ("parkinson", "garman_klass", "rogers_satchell", "yang_zhang"):
+                    row["sigma_sq_" + name] = d[name]
+                    row["drag_" + name] = 0.5 * d[name]
+                row["limit_hit_share"] = d["limit_hit_share"]
+                row["range_gap"] = d["range_gap"]
         rows.append(row)
 
     if not rows:

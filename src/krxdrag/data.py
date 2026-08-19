@@ -153,7 +153,11 @@ def to_bars(prices: pd.DataFrame, symbol: str) -> pd.DataFrame:
     bars = rows.sort_values("date").drop_duplicates(subset=["date"], keep="last")
     cols = ["open", "high", "low", "close"]
     if not set(cols) <= set(bars.columns):
-        return bars.assign(**{c: np.nan for c in cols if c not in bars.columns})
+        # A feed carrying only closes has no bars a range estimator can use.
+        # Returning NaN-filled rows instead would let callers emit a full set of
+        # NaN estimate columns, which reads as "estimated, came out empty"
+        # rather than "never estimated".
+        return pd.DataFrame(columns=["date", *PRICE_COLUMNS])
 
     ok = bars[cols].notna().all(axis=1) & (bars[cols] > 0).all(axis=1)
     ok &= bars["high"] >= bars[["open", "close", "low"]].max(axis=1)

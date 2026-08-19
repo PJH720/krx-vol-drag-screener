@@ -63,6 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-sectors", action="store_true", help="skip sector aggregation")
     p.add_argument("--no-jumps", action="store_true", help="skip the jump decomposition")
     p.add_argument(
+        "--no-range-vol",
+        action="store_true",
+        help="skip the OHLC range-based volatility estimators",
+    )
+    p.add_argument(
         "--etf",
         action="store_true",
         help="audit KRX leveraged ETFs (downloads extra price history)",
@@ -111,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         max_names=args.max_names,
         decompose_jumps=not args.no_jumps,
         rolling_window=args.rolling_window,
+        range_volatility=not args.no_range_vol,
     )
 
     # screen_panel hands back the price matrix it already built, so the sector
@@ -187,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  sectors reported  : {len(sectors):,}")
     if "drag_jump" in df.columns:
         print(f"  median jump share : {df['jump_ratio'].median() * 100:.1f}%")
+    if "range_gap" in df.columns and df["range_gap"].notna().any():
+        print(f"  range vs close    : {df['range_gap'].median() * 100:+.1f}%")
     print()
     print(f"  csv  -> {csv_path}")
     print(f"  md   -> {md_path}")

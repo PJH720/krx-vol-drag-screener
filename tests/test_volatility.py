@@ -222,3 +222,20 @@ def test_liquidity_report_exposes_a_gap_that_widens_as_trading_thins():
 def test_liquidity_report_needs_the_columns_it_reads():
     assert liquidity_bias_report(pd.DataFrame()).empty
     assert liquidity_bias_report(pd.DataFrame({"sigma_sq": [1.0]})).empty
+
+
+def test_liquidity_report_accepts_both_column_conventions():
+    """screen() emits sigma_sq_<method>; a caller may pass the bare column."""
+    base = pd.DataFrame(
+        {
+            "median_turnover": np.logspace(8, 11, 40),
+            "sigma_sq": np.full(40, 0.16),
+        }
+    )
+    prefixed = base.assign(sigma_sq_rogers_satchell=0.16 * 0.8)
+    bare = base.assign(rogers_satchell=0.16 * 0.8)
+
+    for frame in (prefixed, bare):
+        table = liquidity_bias_report(frame, method="rogers_satchell", n_buckets=4)
+        assert len(table) == 4
+        assert table["median_gap"].iloc[0] == pytest.approx(-0.2, abs=1e-9)

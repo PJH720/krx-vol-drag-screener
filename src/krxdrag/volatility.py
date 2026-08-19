@@ -258,7 +258,7 @@ def estimate_all(
     h = bars["high"].to_numpy(float)
     l = bars["low"].to_numpy(float)
     c = bars["close"].to_numpy(float)
-    if not np.isfinite(c).all() or (c <= 0).any():
+    if not all(np.isfinite(x).all() and (x > 0).all() for x in (o, h, l, c)):
         return None
 
     cc = close_to_close(c, periods_per_year)
@@ -291,17 +291,22 @@ def liquidity_bias_report(
     monotonically as turnover falls is the fingerprint of the sampling bias,
     not of thin names genuinely being calmer.
     """
-    needed = {"median_turnover", method, "sigma_sq"}
-    if df.empty or not needed <= set(df.columns):
+    if df.empty:
         return pd.DataFrame()
 
-    d = df[np.isfinite(df[method]) & np.isfinite(df["sigma_sq"]) & (df["sigma_sq"] > 0)]
+    # screen() writes these as sigma_sq_<method>; accept the bare name too so
+    # the function is usable directly on an estimator column.
+    col = f"sigma_sq_{method}" if f"sigma_sq_{method}" in df.columns else method
+    if not {"median_turnover", col, "sigma_sq"} <= set(df.columns):
+        return pd.DataFrame()
+
+    d = df[np.isfinite(df[col]) & np.isfinite(df["sigma_sq"]) & (df["sigma_sq"] > 0)]
     d = d[d["median_turnover"] > 0]
     if len(d) < n_buckets * 2:
         return pd.DataFrame()
 
     bucket = pd.qcut(d["median_turnover"], n_buckets, labels=False, duplicates="drop")
-    gap = d[method] / d["sigma_sq"] - 1.0
+    gap = d[col] / d["sigma_sq"] - 1.0
 
     out = pd.DataFrame({"bucket": bucket, "gap": gap, "turnover": d["median_turnover"]})
     grouped = out.groupby("bucket")
@@ -312,7 +317,10 @@ def liquidity_bias_report(
             "median_gap": grouped["gap"].median(),
         }
     ).reset_index()
+    # Counts, not measurements -- keep them integral so the report does not
+    # render "bucket 1.00, 8.00 names".
     table["bucket"] = table["bucket"].astype(int) + 1
+    table["n_names"] = table["n_names"].astype(int)
     return table
 
 

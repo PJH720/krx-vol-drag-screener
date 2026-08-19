@@ -133,3 +133,44 @@ def test_drag_trend_column_is_present(offline_screen):
 def test_rolling_window_zero_disables_the_trend_column(offline_screen):
     df = screen(_cfg(rolling_window=0), use_cache=False)
     assert "drag_trend" not in df.columns
+
+
+def test_range_volatility_columns_appear_beside_close_to_close(offline_screen):
+    """Range estimates are added, never substituted for the headline sigma."""
+    df = screen(_cfg(), use_cache=False)
+
+    assert "sigma_sq" in df.columns          # close-to-close, still the primary
+    for name in ("parkinson", "garman_klass", "rogers_satchell", "yang_zhang"):
+        assert f"sigma_sq_{name}" in df.columns
+        assert f"drag_{name}" in df.columns
+        assert np.allclose(df[f"drag_{name}"], 0.5 * df[f"sigma_sq_{name}"])
+
+    assert "limit_hit_share" in df.columns
+    assert "range_gap" in df.columns
+
+
+def test_headline_drag_still_comes_from_close_to_close(offline_screen):
+    """The chi-square interval only holds for the sample variance, so the
+    reported drag must keep coming from it even when range estimates exist."""
+    df = screen(_cfg(), use_cache=False)
+    assert np.allclose(df["drag"], 0.5 * df["sigma_sq"])
+    assert not np.allclose(df["drag"], df["drag_yang_zhang"])
+
+
+def test_range_volatility_can_be_switched_off(offline_screen):
+    df = screen(_cfg(range_volatility=False), use_cache=False)
+    assert "sigma_sq_yang_zhang" not in df.columns
+    assert "sigma_sq" in df.columns
+
+
+def test_screen_survives_prices_without_ohlc(monkeypatch, offline_screen, synthetic_prices):
+    """A feed that returns only closes must degrade, not crash."""
+    from krxdrag import screener
+
+    closes_only = synthetic_prices.drop(columns=["open", "high", "low"])
+    monkeypatch.setattr(screener, "load_prices", lambda *a, **k: closes_only)
+
+    df = screen(_cfg(), use_cache=False)
+    assert not df.empty
+    assert "sigma_sq" in df.columns
+    assert "sigma_sq_yang_zhang" not in df.columns
