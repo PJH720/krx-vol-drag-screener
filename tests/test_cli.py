@@ -185,3 +185,25 @@ def test_screen_panel_returns_the_matrix_the_screen_used(offline_screen):
     )
     assert not df.empty and not wide.empty
     assert set(df["symbol"]) <= set(wide.columns)
+
+
+def test_range_volatility_reaches_the_report(offline_cli):
+    assert main(BASE_ARGS + ["--min-sector-names", "2", "--html"]) == 0
+
+    csv = pd.read_csv(next(offline_cli.glob("*.csv")))
+    assert "sigma_sq_yang_zhang" in csv.columns
+    assert "limit_hit_share" in csv.columns
+
+    text = next(offline_cli.glob("*.md")).read_text(encoding="utf-8")
+    assert "변동성 추정량 비교" in text
+
+
+def test_no_range_vol_flag_drops_the_columns(offline_cli):
+    assert main(BASE_ARGS + ["--no-range-vol", "--no-sectors", "--rolling-window", "0"]) == 0
+
+    csv = pd.read_csv(next(offline_cli.glob("*.csv")))
+    assert "sigma_sq_yang_zhang" not in csv.columns
+    assert "sigma_sq" in csv.columns
+
+    text = next(offline_cli.glob("*.md")).read_text(encoding="utf-8")
+    assert "변동성 추정량 비교" not in text

@@ -20,6 +20,7 @@ import pandas as pd
 
 from .config import REPORT_DIR
 from .screener import summarise
+from .volatility import DEFAULT_METHOD, METHODS, liquidity_bias_report
 
 PCT = 100.0
 
@@ -71,10 +72,19 @@ def _korean_font() -> str | None:
 
 
 def _fmt_table(df: pd.DataFrame, cols: list[tuple[str, str]]) -> str:
+    """Markdown table with counts rendered as counts.
+
+    tabulate applies a single `floatfmt` to every numeric column as soon as one
+    float is present, which turns rank 1 and "8 names" into "1.00" and "8.00".
+    Passing one format per column keeps integer columns integral.
+    """
     present = [(c, label) for c, label in cols if c in df.columns]
     view = df[[c for c, _ in present]].copy()
+    fmts = [
+        ".0f" if pd.api.types.is_integer_dtype(view[c]) else ".2f" for c, _ in present
+    ]
     view.columns = [label for _, label in present]
-    return view.to_markdown(index=False, floatfmt=".2f")
+    return view.to_markdown(index=False, floatfmt=tuple(fmts))
 
 
 def _with_percent_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -253,6 +263,76 @@ def _rolling_section(rolling: pd.DataFrame | None, window: int) -> list[str]:
     ]
 
 
+def _volatility_section(df: pd.DataFrame, method: str = DEFAULT_METHOD) -> list[str]:
+    """Range estimates beside close-to-close, and the liquidity gap between them."""
+    col = f"sigma_sq_{method}"
+    if col not in df.columns:
+        return []
+
+    label = METHODS.get(method, method)
+    present = [m for m in METHODS if m == "close_to_close" or f"sigma_sq_{m}" in df.columns]
+
+    rows = []
+    for m in present:
+        series = df["sigma_sq"] if m == "close_to_close" else df[f"sigma_sq_{m}"]
+        series = series[np.isfinite(series) & (series > 0)]
+        if series.empty:
+            continue
+        rows.append(
+            {
+                "추정량": METHODS[m],
+                "중위 σ %": float(np.sqrt(series.median())) * PCT,
+                "중위 드래그 %p": float(series.median()) * 0.5 * PCT,
+            }
+        )
+
+    lines = [
+        "## 변동성 추정량 비교",
+        "",
+        "드래그는 전적으로 `σ²` 의 함수인데, 메인 표의 `σ` 는 종가 대비 표본분산이다 —",
+        "일중에 가격이 무엇을 했는지 전부 버리는, 가장 비효율적인 추정량이다.",
+        "아래는 같은 데이터를 봉 전체로 읽었을 때의 값이다.",
+        "",
+        pd.DataFrame(rows).to_markdown(index=False, floatfmt=".2f"),
+        "",
+    ]
+
+    if "limit_hit_share" in df.columns:
+        limit = float(df["limit_hit_share"].mean()) * PCT
+        lines += [f"- 가격제한폭(±30%) 도달 봉 비중: **{limit:.2f}%**", ""]
+
+    table = liquidity_bias_report(df, method=method)
+    if not table.empty:
+        t = table.copy()
+        t["median_gap_pct"] = t["median_gap"] * PCT
+        t["median_turnover_bn"] = t["median_turnover"] / 1e8
+        t["bucket"] = t["bucket"].astype(int)
+        t["n_names"] = t["n_names"].astype(int)
+        lines += [
+            f"### {label} 과 종가 대비의 괴리 — 유동성 구간별",
+            "",
+            "범위 기반 추정량은 **모두 하방 편의**를 갖는다. 연속시간의 진짜 고·저가는 관측되지 않고,",
+            "체결이 성길수록 관측 범위가 좁아지기 때문이다. 즉 **편의가 유동성과 상관된다.**",
+            "아래에서 거래대금이 낮은 구간일수록 괴리가 커진다면 그것은 표본 추출의 산물이지,",
+            "얇은 종목이 실제로 덜 변동적이라는 뜻이 아니다.",
+            "",
+            _fmt_table(
+                t,
+                [
+                    ("bucket", "구간(1=최저 유동성)"),
+                    ("n_names", "종목수"),
+                    ("median_turnover_bn", "중위 거래대금(억)"),
+                    ("median_gap_pct", "괴리 %"),
+                ],
+            ),
+            "",
+            "> 이 표가 단조롭게 기울어 있는 한, 범위 기반 추정량을 그대로 순위에 쓰면",
+            "> **횡단면이 유동성 방향으로 왜곡된다.** 그래서 메인 순위는 여전히 종가 대비 값이다.",
+            "",
+        ]
+    return lines
+
+
 def _leverage_section(etfs: pd.DataFrame | None) -> list[str]:
     if etfs is None or etfs.empty:
         return []
@@ -351,6 +431,7 @@ def write_markdown(
     ]
 
     lines += _rolling_section(rolling, rolling_window)
+    lines += _volatility_section(df)
     lines += _sector_section(sectors, diversification, top_n)
     lines += _jump_section(df, top_n)
     lines += _leverage_section(etfs)
@@ -853,6 +934,54 @@ def write_html(
                         ("portfolio_drag_pct", "포트폴리오 %p"),
                         ("drag_saved_pct", "절감 %p"),
                         ("drag_saved_share_pct", "절감 비율 %"),
+                    ],
+                ),
+            ]
+
+    vol_col = f"sigma_sq_{DEFAULT_METHOD}"
+    if vol_col in df.columns:
+        rows = []
+        for m in METHODS:
+            series = df["sigma_sq"] if m == "close_to_close" else df.get(f"sigma_sq_{m}")
+            if series is None:
+                continue
+            series = series[np.isfinite(series) & (series > 0)]
+            if series.empty:
+                continue
+            rows.append(
+                {
+                    "method": METHODS[m],
+                    "sigma_pct": float(np.sqrt(series.median())) * PCT,
+                    "drag_pct": float(series.median()) * 0.5 * PCT,
+                }
+            )
+        parts += [
+            "<h2>변동성 추정량 비교</h2>",
+            '<div class="note">드래그는 전적으로 σ² 의 함수인데, 메인 표의 σ 는 '
+            "종가 대비 표본분산 — 일중 움직임을 전부 버리는 가장 비효율적인 추정량입니다.</div>",
+            _html_table(
+                pd.DataFrame(rows),
+                [("method", "추정량"), ("sigma_pct", "중위 σ %"), ("drag_pct", "중위 드래그 %p")],
+            ),
+        ]
+        table = liquidity_bias_report(df, method=DEFAULT_METHOD)
+        if not table.empty:
+            t = table.copy()
+            t["median_gap_pct"] = t["median_gap"] * PCT
+            t["median_turnover_bn"] = t["median_turnover"] / 1e8
+            parts += [
+                "<h3>유동성 구간별 괴리</h3>",
+                '<div class="note warn">범위 기반 추정량은 <strong>모두 하방 편의</strong>를 '
+                "갖고, 체결이 성길수록 커집니다. 아래가 단조롭게 기울어 있다면 그것은 표본 추출의 "
+                "산물이지 얇은 종목이 실제로 덜 변동적이라는 뜻이 아닙니다. "
+                "그래서 메인 순위는 여전히 종가 대비 값입니다.</div>",
+                _html_table(
+                    t,
+                    [
+                        ("bucket", "구간(1=최저 유동성)"),
+                        ("n_names", "종목수"),
+                        ("median_turnover_bn", "중위 거래대금(억)"),
+                        ("median_gap_pct", "괴리 %"),
                     ],
                 ),
             ]

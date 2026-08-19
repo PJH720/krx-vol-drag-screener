@@ -381,3 +381,98 @@ def test_sector_label_table_cells_are_sortable(screened, tmp_path, analysis):
 
     assert 'data-v="S01"' in text
     assert 'data-v="화학"' in text
+
+
+# --- P16: the volatility comparison -------------------------------------------
+
+def test_markdown_compares_the_estimators(screened, tmp_path):
+    text = write_markdown(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+
+    assert "변동성 추정량 비교" in text
+    assert "Yang–Zhang" in text and "Rogers–Satchell" in text
+    assert "가격제한폭" in text
+
+
+def _wide_cross_section(n: int = 60) -> pd.DataFrame:
+    """A screen-shaped frame big enough for the liquidity buckets to form."""
+    rng = np.random.default_rng(4)
+    turnover = np.logspace(8, 11, n)
+    sigma_sq = rng.uniform(0.05, 0.9, n)
+    # gap widens as turnover falls, the artefact the section exists to expose
+    gap = -0.30 + 0.28 * (np.log10(turnover) - 8) / 3
+    return pd.DataFrame(
+        {
+            "rank": np.arange(1, n + 1),
+            "name": [f"N{i}" for i in range(n)],
+            "market": "KOSPI",
+            "median_turnover": turnover,
+            "sigma": np.sqrt(sigma_sq),
+            "sigma_sq": sigma_sq,
+            "g": 0.02,
+            "mu": 0.02 + 0.5 * sigma_sq,
+            "drag": 0.5 * sigma_sq,
+            "drag_ratio": 0.5,
+            "gbm_score": 0.5,
+            "sigma_sq_yang_zhang": sigma_sq * (1 + gap),
+            "drag_yang_zhang": 0.5 * sigma_sq * (1 + gap),
+            "limit_hit_share": 0.01,
+            "range_gap": gap,
+        }
+    )
+
+
+def test_markdown_shows_the_liquidity_gap_when_the_cross_section_is_wide(tmp_path):
+    """The caveat must travel with the numbers, not be left in the source."""
+    text = write_markdown(
+        _wide_cross_section(), top_n=5, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+
+    assert "유동성 구간별" in text
+    assert "편의가 유동성과 상관된다" in text
+    assert "메인 순위는 여전히 종가 대비 값이다" in text
+
+
+def test_liquidity_gap_table_is_skipped_on_a_thin_cross_section(screened, tmp_path):
+    """Seven names cannot support five buckets; the table must simply not appear."""
+    text = write_markdown(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+    assert "유동성 구간별" not in text
+
+
+def test_volatility_section_is_absent_without_range_columns(screened, tmp_path):
+    bare = screened.drop(columns=[c for c in screened.columns if c.startswith("sigma_sq_")])
+    text = write_markdown(
+        bare, top_n=3, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+    assert "변동성 추정량 비교" not in text
+
+
+def test_html_carries_the_estimator_comparison(screened, tmp_path):
+    text = write_html(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+    assert "변동성 추정량 비교" in text
+
+
+def test_html_carries_the_liquidity_warning_when_buckets_form(tmp_path):
+    text = write_html(
+        _wide_cross_section(), top_n=5, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+
+    assert "하방 편의" in text
+    assert "note warn" in text
+
+
+def test_markdown_renders_counts_as_counts(tmp_path):
+    """tabulate applies one floatfmt to every numeric column once a float is
+    present, which turned rank 1 and '8 names' into '1.00' and '8.00'."""
+    from krxdrag.report import _fmt_table
+
+    frame = pd.DataFrame({"rank": [1, 2], "n_names": [8, 9], "gap": [-0.27, -0.21]})
+    out = _fmt_table(frame, [("rank", "#"), ("n_names", "종목수"), ("gap", "괴리")])
+
+    assert "1.00" not in out and "8.00" not in out
+    assert "-0.27" in out
