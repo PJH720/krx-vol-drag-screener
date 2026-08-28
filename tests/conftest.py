@@ -51,7 +51,14 @@ def synthetic_universe() -> pd.DataFrame:
 
 @pytest.fixture
 def synthetic_prices() -> pd.DataFrame:
-    """Same long-format frame data.load_prices() returns: date, symbol, close, volume."""
+    """Same long-format frame data.load_prices() returns, OHLCV included.
+
+    Closes come from simulate_gbm so the estimates the screen produces can be
+    checked against the (mu, sigma) that generated them. The open/high/low
+    around each close are drawn as a plausible bar -- enough for the range
+    estimators to run end to end, not calibrated to reproduce sigma exactly;
+    test_volatility.py owns that with properly simulated intraday paths.
+    """
     n_days = 600
     start = date(2023, 1, 2)
     dates = pd.to_datetime([start + timedelta(days=i) for i in range(n_days + 1)])
@@ -59,12 +66,25 @@ def synthetic_prices() -> pd.DataFrame:
     frames = []
     for seed, (symbol, (_, _, _, mu, sigma, volume)) in enumerate(SYNTHETIC_SPEC.items()):
         path = simulate_gbm(mu=mu, sigma=sigma, n_days=n_days, s0=50_000.0, seed=seed + 1)
+        rng = np.random.default_rng(1000 + seed)
+
+        close = path
+        prev = np.concatenate([[path[0]], path[:-1]])
+        daily = sigma / np.sqrt(252.0)
+        open_ = prev * np.exp(rng.normal(0.0, daily * 0.3, size=close.size))
+        wick = np.abs(rng.normal(0.0, daily * 0.6, size=close.size))
+        high = np.maximum(open_, close) * np.exp(wick)
+        low = np.minimum(open_, close) * np.exp(-wick)
+
         frames.append(
             pd.DataFrame(
                 {
                     "date": dates,
                     "symbol": symbol,
-                    "close": path,
+                    "open": open_,
+                    "high": high,
+                    "low": low,
+                    "close": close,
                     "volume": volume,
                 }
             )
