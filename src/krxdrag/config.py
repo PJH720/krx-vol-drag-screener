@@ -35,3 +35,4 @@ class ScreenConfig:
     decompose_jumps: bool = True     # split drag into continuous / jump parts
     rolling_window: int = 126        # trading days for drag_trend; 0 disables
     range_volatility: bool = True    # also estimate sigma^2 from the OHLC bar
+    fdr_q: float = 0.05              # false-discovery rate for the diagnostics; 0 disables

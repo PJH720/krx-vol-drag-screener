@@ -20,6 +20,7 @@ import pandas as pd
 
 from .config import REPORT_DIR
 from .screener import summarise
+from .diagnostics import FDR_Q, fdr_report
 from .validation import QUANTITIES
 from .volatility import DEFAULT_METHOD, METHODS, liquidity_bias_report
 
@@ -264,6 +265,57 @@ def _rolling_section(rolling: pd.DataFrame | None, window: int) -> list[str]:
     ]
 
 
+def _fdr_section(df: pd.DataFrame, q: float = FDR_Q) -> list[str]:
+    """Raw versus false-discovery-controlled rejection counts."""
+    table = fdr_report(df, q=q)
+    if table.empty:
+        return []
+
+    t = table.copy()
+    for col in ("raw_share", "fdr_share"):
+        t[col + "_pct"] = t[col] * PCT
+    t["n_tested"] = t["n_tested"].astype(int)
+    t["raw_rejections"] = t["raw_rejections"].astype(int)
+    t["fdr_rejections"] = t["fdr_rejections"].astype(int)
+
+    m = int(t["n_tested"].max())
+    floor = q * m
+
+    lines = [
+        "## 다중검정 보정",
+        "",
+        f"진단은 종목마다 한 번씩 돌아가는 가설검정이다. {m:,}개 종목에 유의수준 {q:.0%} 로",
+        f"검정하면 **모든 귀무가설이 참이어도 우연히 약 {floor:.0f}건이 «유의»하게 나온다.**",
+        "따라서 보정 없는 기각 수는 그 자체로는 증거가 되지 못한다.",
+        "",
+        "Benjamini–Hochberg 는 **기각된 것들 중 거짓의 기대 비율**을 통제한다 —",
+        "리더보드를 읽는 사람이 실제로 궁금해하는 양이다.",
+        "",
+        _fmt_table(
+            t,
+            [
+                ("test", "검정"),
+                ("n_tested", "검정 수"),
+                ("raw_rejections", "보정 전 기각"),
+                ("fdr_rejections", "FDR 보정 후"),
+                ("expected_by_chance", "우연 기대치"),
+                ("fdr_share_pct", "보정 후 비중 %"),
+            ],
+        ),
+        "",
+        "**보정 전 기각 수가 «우연 기대치» 근처라면 잡음과 구별되지 않는다.**",
+        "한참 위라면 실재하는 효과다.",
+        "",
+        "> 세 검정의 성격이 다르다는 점에 유의할 것. 정규성 검정은 실제 데이터에서 거의 모든",
+        "> 종목을 기각하므로 보정이 거의 아무것도 바꾸지 않는다. 반면 점프 검정은 기각률이",
+        "> 중간이라 우연 기대치가 그 중 실질적인 몫을 차지하며, 보정이 의미를 갖는 것은 여기다.",
+        "> 세 검정은 서로 다른 질문을 하므로 **각각 따로** 보정한다 — 한데 묶으면 압도적으로",
+        "> 기각되는 검정이 나머지의 임계값을 끌고 다니게 된다.",
+        "",
+    ]
+    return lines
+
+
 def _persistence_section(table: pd.DataFrame | None, window: int) -> list[str]:
     """The project's founding claim, measured rather than asserted."""
     if table is None or table.empty:
@@ -496,6 +548,7 @@ def write_markdown(
         "",
     ]
 
+    lines += _fdr_section(df)
     lines += _persistence_section(persistence, validation_window)
     lines += _rolling_section(rolling, rolling_window)
     lines += _volatility_section(df)
@@ -1006,6 +1059,32 @@ def write_html(
                     ],
                 ),
             ]
+
+    fdr = fdr_report(df)
+    if not fdr.empty:
+        f = fdr.copy()
+        f["fdr_share_pct"] = f["fdr_share"] * PCT
+        for c in ("n_tested", "raw_rejections", "fdr_rejections"):
+            f[c] = f[c].astype(int)
+        m = int(f["n_tested"].max())
+        parts += [
+            "<h2>다중검정 보정</h2>",
+            '<div class="note">진단은 종목마다 한 번씩 돌아가는 가설검정입니다. '
+            f"{m:,}개 종목에 5% 유의수준이면 <strong>모든 귀무가설이 참이어도 우연히 약 "
+            f"{0.05 * m:.0f}건이 «유의»하게 나옵니다.</strong> Benjamini–Hochberg 는 기각된 것들 중 "
+            "거짓의 기대 비율을 통제합니다.</div>",
+            _html_table(
+                f,
+                [
+                    ("test", "검정"),
+                    ("n_tested", "검정 수"),
+                    ("raw_rejections", "보정 전 기각"),
+                    ("fdr_rejections", "FDR 보정 후"),
+                    ("expected_by_chance", "우연 기대치"),
+                    ("fdr_share_pct", "보정 후 비중 %"),
+                ],
+            ),
+        ]
 
     if persistence is not None and not persistence.empty:
         pt = persistence.copy()

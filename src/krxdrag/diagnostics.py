@@ -12,7 +12,19 @@ from dataclasses import dataclass, asdict
 from typing import Any
 
 import numpy as np
+import pandas as pd
 from scipy import stats
+
+# Default false-discovery rate for the cross-sectional correction below.
+FDR_Q: float = 0.05
+
+# The per-name tests this screen runs, and what a *rejection* of each means.
+# Keyed by the p-value column the screen carries.
+DIAGNOSTIC_TESTS: dict[str, str] = {
+    "jb_pvalue": "정규성 기각 (Jarque–Bera)",
+    "lb_sq_pvalue": "변동성 군집 있음 (Ljung–Box)",
+    "bns_pvalue": "점프 유의 (BNS)",
+}
 
 
 @dataclass(frozen=True)
@@ -90,3 +102,110 @@ def compute_diagnostics(returns: np.ndarray, lags: int = 10) -> Diagnostics | No
         no_arch_ok=no_arch_ok,
         gbm_score=gbm_score,
     )
+
+
+# --------------------------------------------------------------------------
+# multiple testing across the cross-section
+# --------------------------------------------------------------------------
+#
+# Each diagnostic above is a hypothesis test run once per name. Run at the 5%
+# level across 1,100 names, a test rejects roughly 55 of them by chance alone
+# even when every null is true -- so "55 names show significant jumps" may be
+# no evidence of anything. Benjamini-Hochberg controls the expected share of
+# false positives *among the rejections*, which is the quantity a reader of a
+# leaderboard actually cares about.
+#
+# Two of the three tests reject so overwhelmingly on real KRX data (Jarque-Bera
+# rejects normality for ~99.9% of names) that the correction changes little;
+# it matters for the jump flag, where the rejection rate is moderate and the
+# chance floor is a real share of it. The correction is applied to all three
+# regardless, and both counts are reported, so the reader can see which is
+# which instead of being told.
+
+
+def benjamini_hochberg(pvalues, q: float = FDR_Q) -> np.ndarray:
+    """Step-up procedure: which hypotheses to reject at false-discovery rate q.
+
+    Non-finite p-values take no part in the procedure and are never rejected;
+    m counts only the tests that actually ran.
+    """
+    p = np.asarray(pvalues, dtype=float)
+    rejected = np.zeros(p.shape, dtype=bool)
+
+    finite = np.isfinite(p)
+    m = int(finite.sum())
+    if m == 0:
+        return rejected
+
+    idx = np.flatnonzero(finite)
+    order = idx[np.argsort(p[idx], kind="stable")]
+    ranked = p[order]
+
+    below = np.flatnonzero(ranked <= q * np.arange(1, m + 1) / m)
+    if below.size:
+        # Reject everything up to the largest passing rank, not just the ranks
+        # that individually pass -- that step-up is what makes it BH.
+        rejected[order[: below[-1] + 1]] = True
+    return rejected
+
+
+def bh_adjusted(pvalues) -> np.ndarray:
+    """Benjamini-Hochberg adjusted p-values (q-values).
+
+    The smallest FDR at which each hypothesis would be rejected, made monotone
+    by the usual running minimum from the largest p-value down.
+    """
+    p = np.asarray(pvalues, dtype=float)
+    out = np.full(p.shape, np.nan, dtype=float)
+
+    finite = np.isfinite(p)
+    m = int(finite.sum())
+    if m == 0:
+        return out
+
+    idx = np.flatnonzero(finite)
+    order = idx[np.argsort(p[idx], kind="stable")]
+    scaled = p[order] * m / np.arange(1, m + 1)
+    out[order] = np.minimum.accumulate(scaled[::-1])[::-1].clip(max=1.0)
+    return out
+
+
+def fdr_report(
+    df: pd.DataFrame,
+    tests: dict[str, str] | None = None,
+    q: float = FDR_Q,
+) -> pd.DataFrame:
+    """Raw versus FDR-controlled rejection counts, one row per test.
+
+    `expected_by_chance` is q * m -- how many rejections a test would produce
+    on this many names if every null were true. A raw count near it is
+    indistinguishable from noise; one far above it is not.
+    """
+    tests = tests or DIAGNOSTIC_TESTS
+    rows: list[dict] = []
+
+    for column, label in tests.items():
+        if column not in df.columns:
+            continue
+        p = df[column].to_numpy(dtype=float)
+        m = int(np.isfinite(p).sum())
+        if m == 0:
+            continue
+
+        raw = int((p < q).sum())
+        controlled = int(benjamini_hochberg(p, q=q).sum())
+        rows.append(
+            {
+                "test": label,
+                "n_tested": m,
+                "raw_rejections": raw,
+                "fdr_rejections": controlled,
+                "expected_by_chance": q * m,
+                "raw_share": raw / m,
+                "fdr_share": controlled / m,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)

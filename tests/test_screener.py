@@ -174,3 +174,33 @@ def test_screen_survives_prices_without_ohlc(monkeypatch, offline_screen, synthe
     assert not df.empty
     assert "sigma_sq" in df.columns
     assert "sigma_sq_yang_zhang" not in df.columns
+
+
+def test_fdr_columns_are_added_cross_sectionally(offline_screen):
+    """The correction is a property of the whole screen, not of one name."""
+    df = screen(_cfg(), use_cache=False)
+
+    for base in ("jb", "lb_sq", "bns"):
+        assert f"{base}_qvalue" in df.columns
+        assert f"{base}_rejected_fdr" in df.columns
+
+    # a q-value can only inflate its p-value, never shrink it
+    finite = np.isfinite(df["jb_qvalue"])
+    assert (df.loc[finite, "jb_qvalue"] >= df.loc[finite, "jb_pvalue"] - 1e-12).all()
+
+
+def test_fdr_flags_are_a_subset_of_the_uncorrected_ones(offline_screen):
+    df = screen(_cfg(), use_cache=False)
+    raw = df["bns_pvalue"] < 0.05
+    assert not (df["bns_rejected_fdr"] & ~raw).any()
+
+
+def test_fdr_can_be_switched_off(offline_screen):
+    df = screen(_cfg(fdr_q=0.0), use_cache=False)
+    assert "jb_qvalue" not in df.columns
+    assert "jb_pvalue" in df.columns
+
+
+def test_summarise_reports_both_jump_shares(offline_screen):
+    s = summarise(screen(_cfg(), use_cache=False))
+    assert s["share_jumps_fdr"] <= s["share_jumps_raw"]
