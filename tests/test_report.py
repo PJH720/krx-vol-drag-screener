@@ -476,3 +476,65 @@ def test_markdown_renders_counts_as_counts(tmp_path):
 
     assert "1.00" not in out and "8.00" not in out
     assert "-0.27" in out
+
+
+# --- P17: the persistence section ----------------------------------------------
+
+def _persistence_table() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"quantity": "sigma_sq", "n_pairs": 3, "n_names": 300,
+             "spearman": 0.97, "pearson": 0.95, "r2_oos": 0.90, "ceiling": 0.95},
+            {"quantity": "drag", "n_pairs": 3, "n_names": 300,
+             "spearman": 0.97, "pearson": 0.95, "r2_oos": 0.90, "ceiling": 0.95},
+            {"quantity": "g", "n_pairs": 3, "n_names": 300,
+             "spearman": 0.12, "pearson": 0.12, "r2_oos": -0.78, "ceiling": 0.07},
+            {"quantity": "mu", "n_pairs": 3, "n_names": 300,
+             "spearman": 0.11, "pearson": 0.10, "r2_oos": -0.81, "ceiling": 0.05},
+        ]
+    )
+
+
+def test_markdown_reports_the_persistence_measurement(screened, tmp_path):
+    text = write_markdown(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE,
+        persistence=_persistence_table(),
+    ).read_text(encoding="utf-8")
+
+    assert "다음 기간까지 살아남는가" in text
+    assert "한 번도 측정한 적이 없었다" in text
+    # the negative out-of-sample R2 must be spelled out, not just tabulated
+    assert "표본외 R² 가 음수" in text
+    assert "횡단면 평균을 그냥 찍는 것보다" in text
+    # and the drag/variance identity must be stated, not left implicit
+    assert "두 개의 증거가 아니라 한 문장이다" in text
+
+
+def test_persistence_section_absent_without_the_measurement(screened, tmp_path):
+    text = write_markdown(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+    assert "다음 기간까지 살아남는가" not in text
+
+
+def test_html_reports_the_persistence_measurement(screened, tmp_path):
+    text = write_html(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE,
+        persistence=_persistence_table(),
+    ).read_text(encoding="utf-8")
+
+    assert "다음 기간까지 살아남는가" in text
+    assert "note warn" in text
+    assert "순위를 투자 신호로 읽지 말라" in text
+
+
+def test_persistence_section_stays_quiet_when_r2_is_positive(screened, tmp_path):
+    """The warning is earned by a negative R2, not printed unconditionally."""
+    good = _persistence_table()
+    good["r2_oos"] = [0.9, 0.9, 0.5, 0.4]
+    text = write_markdown(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE, persistence=good
+    ).read_text(encoding="utf-8")
+
+    assert "다음 기간까지 살아남는가" in text
+    assert "표본외 R² 가 음수" not in text

@@ -20,6 +20,7 @@ import pandas as pd
 
 from .config import REPORT_DIR
 from .screener import summarise
+from .validation import QUANTITIES
 from .volatility import DEFAULT_METHOD, METHODS, liquidity_bias_report
 
 PCT = 100.0
@@ -263,6 +264,69 @@ def _rolling_section(rolling: pd.DataFrame | None, window: int) -> list[str]:
     ]
 
 
+def _persistence_section(table: pd.DataFrame | None, window: int) -> list[str]:
+    """The project's founding claim, measured rather than asserted."""
+    if table is None or table.empty:
+        return []
+
+    t = table.copy()
+    t["quantity_label"] = t["quantity"].map(QUANTITIES).fillna(t["quantity"])
+
+    cols = [
+        ("quantity_label", "추정량"),
+        ("spearman", "순위 지속성 ρ"),
+        ("r2_oos", "표본외 R²"),
+    ]
+    if "ceiling" in t.columns:
+        cols.append(("ceiling", "잡음 상한"))
+    cols.append(("n_names", "종목수"))
+
+    best = t.iloc[0]
+    worst = t.iloc[-1]
+
+    lines = [
+        f"## 추정량이 다음 기간까지 살아남는가 ({window}거래일 창)",
+        "",
+        "이 저장소는 첫 커밋부터 «σ² 은 μ 보다 정확히 추정되므로 드래그가 더 믿을 만하다»고",
+        "주장해 왔지만, **한 번도 측정한 적이 없었다.** 아래가 그 측정이다.",
+        "",
+        "이력을 겹치지 않는 창으로 자르고, 창 t 에서 추정한 값이 창 t+1 에서 실제로",
+        "실현된 값을 얼마나 맞히는지 본다. 창이 겹치면 공유된 관측치가 지속성을",
+        "만들어내므로 반드시 분리한다.",
+        "",
+        _fmt_table(t, cols),
+        "",
+        f"- 가장 안정적: **{best['quantity_label']}** (ρ = {best['spearman']:.3f})",
+        f"- 가장 불안정: **{worst['quantity_label']}** (ρ = {worst['spearman']:.3f})",
+        "",
+    ]
+
+    if worst["r2_oos"] < 0:
+        lines += [
+            f"> **표본외 R² 가 음수({worst['r2_oos']:.2f})** 라는 것은, 직전 창의",
+            f"> {worst['quantity_label']} 추정치를 예측으로 쓰는 것이 **횡단면 평균을 그냥 찍는 것보다**",
+            "> 나쁘다는 뜻이다. 순위가 약한 정도가 아니라 정보가 음(陰)이다.",
+            "",
+        ]
+
+    lines += [
+        "**해석.** 드래그 `½σ²` 는 `σ²` 의 단조 변환이므로 두 행의 순위 지속성은 정의상 같다 —",
+        "«드래그 순위가 안정적이다»와 «분산 순위가 안정적이다»는 두 개의 증거가 아니라 한 문장이다.",
+        "",
+    ]
+    if "ceiling" in t.columns:
+        lines += [
+            "«잡음 상한»은 각 종목의 참값이 전혀 변하지 않고 표본오차만 작용할 때 도달 가능한",
+            "지속성이다. 측정치가 상한에 가까우면 그 값은 잴 수 있는 만큼 안정적이라는 뜻이고,",
+            "상한보다 한참 낮으면 모수 자체가 움직이고 있다는 뜻이다.",
+            "",
+            "> 이것이 **순위를 투자 신호로 읽지 말라**는 경고의 근거다. μ 순위는 다음 기간에",
+            "> 거의 남지 않는다 — 추정이 어려워서지, 시장이 특별해서가 아니다.",
+            "",
+        ]
+    return lines
+
+
 def _volatility_section(df: pd.DataFrame, method: str = DEFAULT_METHOD) -> list[str]:
     """Range estimates beside close-to-close, and the liquidity gap between them."""
     col = f"sigma_sq_{method}"
@@ -388,7 +452,9 @@ def write_markdown(
     diversification: pd.DataFrame | None = None,
     rolling: pd.DataFrame | None = None,
     etfs: pd.DataFrame | None = None,
+    persistence: pd.DataFrame | None = None,
     rolling_window: int = 126,
+    validation_window: int = 126,
 ) -> Path:
     path, run_date = _path(out_dir, run_date, "md")
     s = summarise(df)
@@ -430,6 +496,7 @@ def write_markdown(
         "",
     ]
 
+    lines += _persistence_section(persistence, validation_window)
     lines += _rolling_section(rolling, rolling_window)
     lines += _volatility_section(df)
     lines += _sector_section(sectors, diversification, top_n)
@@ -807,7 +874,9 @@ def write_html(
     diversification: pd.DataFrame | None = None,
     rolling: pd.DataFrame | None = None,
     etfs: pd.DataFrame | None = None,
+    persistence: pd.DataFrame | None = None,
     rolling_window: int = 126,
+    validation_window: int = 126,
     charts: dict[str, Path | None] | None = None,
     sector_labels: dict[str, str] | None = None,
 ) -> Path:
@@ -937,6 +1006,39 @@ def write_html(
                     ],
                 ),
             ]
+
+    if persistence is not None and not persistence.empty:
+        pt = persistence.copy()
+        pt["quantity_label"] = pt["quantity"].map(QUANTITIES).fillna(pt["quantity"])
+        best, worst = pt.iloc[0], pt.iloc[-1]
+        cols = [
+            ("quantity_label", "추정량"),
+            ("spearman", "순위 지속성 ρ"),
+            ("r2_oos", "표본외 R²"),
+        ]
+        if "ceiling" in pt.columns:
+            cols.append(("ceiling", "잡음 상한"))
+        cols.append(("n_names", "종목수"))
+
+        parts += [
+            f"<h2>추정량이 다음 기간까지 살아남는가 ({validation_window}거래일 창)</h2>",
+            '<div class="note">이 저장소는 첫 커밋부터 «σ² 은 μ 보다 정확히 추정되므로 '
+            "드래그가 더 믿을 만하다»고 주장해 왔지만 <strong>한 번도 측정한 적이 "
+            "없었습니다.</strong> 겹치지 않는 창으로 이력을 자르고, 창 t 의 추정치가 창 t+1 의 "
+            "실현값을 얼마나 맞히는지 잰 결과입니다.</div>",
+            _html_table(pt, cols),
+            f'<p>가장 안정적: <strong>{html.escape(str(best["quantity_label"]))}</strong> '
+            f'(ρ = {best["spearman"]:.3f}) · 가장 불안정: '
+            f'<strong>{html.escape(str(worst["quantity_label"]))}</strong> '
+            f'(ρ = {worst["spearman"]:.3f})</p>',
+        ]
+        if worst["r2_oos"] < 0:
+            parts.append(
+                f'<div class="note warn">표본외 R² 가 음수({worst["r2_oos"]:.2f})라는 것은 '
+                f"직전 창의 {html.escape(str(worst['quantity_label']))} 추정치를 예측으로 쓰는 것이 "
+                "<strong>횡단면 평균을 그냥 찍는 것보다 나쁘다</strong>는 뜻입니다. "
+                "순위를 투자 신호로 읽지 말라는 경고의 근거가 이것입니다.</div>"
+            )
 
     vol_col = f"sigma_sq_{DEFAULT_METHOD}"
     if vol_col in df.columns:

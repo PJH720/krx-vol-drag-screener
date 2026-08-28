@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -207,3 +208,75 @@ def test_no_range_vol_flag_drops_the_columns(offline_cli):
 
     text = next(offline_cli.glob("*.md")).read_text(encoding="utf-8")
     assert "변동성 추정량 비교" not in text
+
+
+def test_persistence_is_omitted_on_too_narrow_a_cross_section(offline_cli):
+    """Seven names cannot support a cross-sectional rank correlation."""
+    assert main(BASE_ARGS + ["--min-sector-names", "2", "--validation-window", "126"]) == 0
+    text = next(offline_cli.glob("*.md")).read_text(encoding="utf-8")
+    assert "다음 기간까지 살아남는가" not in text
+
+
+def test_persistence_measurement_reaches_the_report(monkeypatch, tmp_path):
+    """End to end on a universe wide enough to rank: the measurement is
+    computed from the screen's own price panel, not from a fixture table."""
+    from krxdrag import report, screener
+    from krxdrag.metrics import TRADING_DAYS
+
+    rng = np.random.default_rng(21)
+    n_names, n_days = 40, 760
+    sigma = rng.uniform(0.25, 1.10, n_names)
+    mu = rng.uniform(-0.3, 0.9, n_names)
+    step = 1.0 / TRADING_DAYS
+    inc = rng.normal(
+        (mu - 0.5 * sigma**2) * step, sigma * np.sqrt(step), size=(n_days, n_names)
+    )
+    close = 50_000 * np.exp(np.vstack([np.zeros(n_names), np.cumsum(inc, axis=0)]))
+    dates = pd.to_datetime(pd.date_range("2022-01-03", periods=n_days + 1))
+
+    frames, rows = [], []
+    for i in range(n_names):
+        c = close[:, i]
+        o = np.concatenate([[c[0]], c[:-1]])
+        wick = np.abs(rng.normal(0, sigma[i] / np.sqrt(252) * 0.6, c.size))
+        frames.append(
+            pd.DataFrame(
+                {
+                    "date": dates, "symbol": f"{i + 1:06d}.KS", "open": o,
+                    "high": np.maximum(o, c) * np.exp(wick),
+                    "low": np.minimum(o, c) * np.exp(-wick),
+                    "close": c, "volume": 1e6,
+                }
+            )
+        )
+        rows.append(
+            {"name": f"종목{i + 1}", "code": f"{i + 1:06d}", "sector": "화학",
+             "market": "KOSPI", "symbol": f"{i + 1:06d}.KS"}
+        )
+
+    prices = pd.concat(frames, ignore_index=True)
+    universe = pd.DataFrame(rows)
+    monkeypatch.setattr(screener, "load_universe", lambda **k: universe)
+    monkeypatch.setattr(
+        screener, "load_prices",
+        lambda syms, **k: prices[prices["symbol"].isin(syms)].reset_index(drop=True),
+    )
+    monkeypatch.setattr(cli, "load_prices", lambda syms, **k: prices)
+    monkeypatch.setattr(report, "REPORT_DIR", tmp_path)
+
+    assert main(["--lookback", "761", "--min-turnover", "0", "--top", "3", "--quiet",
+                 "--no-sectors", "--validation-window", "126", "--html"]) == 0
+
+    text = next(tmp_path.glob("*.md")).read_text(encoding="utf-8")
+    assert "다음 기간까지 살아남는가" in text
+    assert "표본외 R² 가 음수" in text          # mu really is that bad
+    assert next(tmp_path.glob("*.html")).read_text(encoding="utf-8").count(
+        "다음 기간까지 살아남는가"
+    ) == 1
+
+
+def test_validation_window_zero_disables_it(offline_cli):
+    assert main(BASE_ARGS + ["--validation-window", "0", "--no-sectors",
+                             "--rolling-window", "0"]) == 0
+    text = next(offline_cli.glob("*.md")).read_text(encoding="utf-8")
+    assert "다음 기간까지 살아남는가" not in text
