@@ -21,6 +21,13 @@ from .leverage import (
 from .metrics import DragMetrics, compute_drag, log_returns, simulate_gbm
 from .rolling import cross_sectional_drag, drag_trend, rolling_drag, rolling_panel
 from .screener import screen, screen_panel, summarise
+from .validation import (
+    PersistenceResult,
+    persistence,
+    persistence_with_ceiling,
+    reliability,
+    window_estimates,
+)
 from .volatility import (
     DEFAULT_METHOD,
     METHODS,
@@ -64,6 +71,11 @@ __all__ = [
     "screen",
     "screen_panel",
     "summarise",
+    "PersistenceResult",
+    "persistence",
+    "persistence_with_ceiling",
+    "reliability",
+    "window_estimates",
     "DEFAULT_METHOD",
     "METHODS",
     "VarianceEstimates",

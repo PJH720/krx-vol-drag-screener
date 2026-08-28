@@ -22,6 +22,7 @@ from .report import (
 )
 from .rolling import cross_sectional_drag
 from .screener import screen_panel, summarise
+from .validation import persistence_with_ceiling
 from .sectors import aggregate_sectors, diversification_benefit, sector_portfolio_drag
 
 log = logging.getLogger(__name__)
@@ -66,6 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-range-vol",
         action="store_true",
         help="skip the OHLC range-based volatility estimators",
+    )
+    p.add_argument(
+        "--validation-window",
+        type=int,
+        default=126,
+        help="trading days per out-of-sample persistence window; 0 disables",
     )
     p.add_argument(
         "--etf",
@@ -146,6 +153,14 @@ def main(argv: list[str] | None = None) -> int:
                 wide, window=args.rolling_window, periods_per_year=cfg.periods_per_year
             )
 
+    validation = None
+    if args.validation_window and not wide.empty:
+        validation = persistence_with_ceiling(
+            wide,
+            window=args.validation_window,
+            periods_per_year=cfg.periods_per_year,
+        )
+
     etfs = _etf_audit(cfg, use_cache) if args.etf else None
 
     # --- output ----------------------------------------------------------
@@ -166,7 +181,9 @@ def main(argv: list[str] | None = None) -> int:
         diversification=diversification,
         rolling=rolling,
         etfs=etfs,
+        persistence=validation,
         rolling_window=args.rolling_window,
+        validation_window=args.validation_window,
     )
     html_path = None
     if args.html:
@@ -177,7 +194,9 @@ def main(argv: list[str] | None = None) -> int:
             diversification=diversification,
             rolling=rolling,
             etfs=etfs,
+            persistence=validation,
             rolling_window=args.rolling_window,
+            validation_window=args.validation_window,
             charts=charts,
             sector_labels=sector_labels,
         )
@@ -195,6 +214,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  median jump share : {df['jump_ratio'].median() * 100:.1f}%")
     if "range_gap" in df.columns and df["range_gap"].notna().any():
         print(f"  range vs close    : {df['range_gap'].median() * 100:+.1f}%")
+    if validation is not None and not validation.empty:
+        v = validation.set_index("quantity")["spearman"]
+        print(f"  persistence σ²/μ  : {v.get('sigma_sq', float('nan')):.2f}"
+              f" / {v.get('mu', float('nan')):.2f}")
     print()
     print(f"  csv  -> {csv_path}")
     print(f"  md   -> {md_path}")
