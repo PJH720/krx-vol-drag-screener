@@ -538,3 +538,35 @@ def test_persistence_section_stays_quiet_when_r2_is_positive(screened, tmp_path)
 
     assert "다음 기간까지 살아남는가" in text
     assert "표본외 R² 가 음수" not in text
+
+
+# --- P18: multiple testing ------------------------------------------------------
+
+def test_markdown_reports_the_multiple_testing_correction(screened, tmp_path):
+    text = write_markdown(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+
+    assert "다중검정 보정" in text
+    assert "우연 기대치" in text
+    # the reason the correction matters unevenly must be stated
+    assert "정규성 검정은 실제 데이터에서 거의 모든" in text
+    assert "각각 따로" in text
+
+
+def test_html_reports_the_multiple_testing_correction(screened, tmp_path):
+    text = write_html(
+        screened, top_n=3, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+    assert "다중검정 보정" in text
+    assert "Benjamini" in text
+
+
+def test_fdr_section_absent_without_pvalues(screened, tmp_path):
+    bare = screened.drop(
+        columns=[c for c in screened.columns if c.endswith("_pvalue")]
+    )
+    text = write_markdown(
+        bare, top_n=3, out_dir=tmp_path, run_date=RUN_DATE
+    ).read_text(encoding="utf-8")
+    assert "다중검정 보정" not in text

@@ -9,7 +9,7 @@ import pandas as pd
 
 from .config import ScreenConfig
 from .data import load_prices, median_turnover, to_bars, to_wide
-from .diagnostics import compute_diagnostics
+from .diagnostics import DIAGNOSTIC_TESTS, benjamini_hochberg, bh_adjusted, compute_diagnostics
 from .jumps import decompose_jumps
 from .metrics import compute_drag, log_returns
 from .rolling import drag_trend
@@ -127,10 +127,33 @@ def screen_panel(
     if not residual < 1e-10:
         raise ValueError(f"Ito identity violated, max residual {residual}")
 
+    if cfg.fdr_q:
+        df = _control_false_discoveries(df, q=cfg.fdr_q)
+
     df = df.sort_values("drag", ascending=False).reset_index(drop=True)
     df.insert(0, "rank", np.arange(1, len(df) + 1))
     log.info("screen: %d names passed filters", len(df))
     return df, wide
+
+
+def _control_false_discoveries(df: pd.DataFrame, q: float) -> pd.DataFrame:
+    """Add FDR-controlled q-values and flags for each per-name diagnostic.
+
+    This has to happen here rather than in compute_diagnostics(): the
+    correction is a property of the whole cross-section, so it cannot be
+    computed while looking at one name at a time. Each test is corrected
+    within itself -- the three ask different questions, and pooling them would
+    let an overwhelming rejection rate on one drag the others' thresholds
+    around.
+    """
+    out = df.copy()
+    for column in DIAGNOSTIC_TESTS:
+        if column not in out.columns:
+            continue
+        p = out[column].to_numpy(dtype=float)
+        out[column.replace("_pvalue", "_qvalue")] = bh_adjusted(p)
+        out[column.replace("_pvalue", "_rejected_fdr")] = benjamini_hochberg(p, q=q)
+    return out
 
 
 def summarise(df: pd.DataFrame) -> dict[str, float]:
@@ -153,5 +176,11 @@ def summarise(df: pd.DataFrame) -> dict[str, float]:
         else float("nan"),
         "share_normal_ok": float(df["normal_ok"].mean())
         if "normal_ok" in df
+        else float("nan"),
+        "share_jumps_raw": float(df["has_jumps"].mean())
+        if "has_jumps" in df
+        else float("nan"),
+        "share_jumps_fdr": float(df["bns_rejected_fdr"].mean())
+        if "bns_rejected_fdr" in df
         else float("nan"),
     }
